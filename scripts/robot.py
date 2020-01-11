@@ -1,7 +1,7 @@
 # Simple tank steer robot using approxeng.input and redboard
 # Presented here with no explanation :)
 from approxeng.input.selectbinder import ControllerResource
-from redboard import RedBoard
+from redboard import RedBoard, Display
 from time import sleep
 
 
@@ -17,20 +17,21 @@ class RobotStopException(Exception):
 
 
 board = RedBoard()
+display = Display()
 
 try:
     while True:
         try:
-            with ControllerResource(dead_zone=0.1, hot_zone=0.2) as joystick:
+            with ControllerResource() as joystick:
+                display.text(line1='Simple Robot Script', line3='Off we go!')
                 while joystick.connected:
                     joystick.check_presses()
                     if 'home' in joystick.presses:
                         raise RobotStopException()
-                    power_left, power_right = mixer(yaw=joystick.lx, throttle=joystick.ly)
-                    board.set_motor_speed(0, power_left)
-                    board.set_motor_speed(1, power_right)
+                    board.motor0, board.motor1 = mixer(yaw=joystick.lx, throttle=joystick.ly)
+
         except IOError:
-            print('No controller found yet')
+            display.text(line1='Simple Robot Script', line3='Waiting for Controller')
             sleep(1)
 except RobotStopException:
-    oard.stop()
+    board.stop()

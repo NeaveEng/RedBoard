@@ -23,6 +23,9 @@ SERVO_PINS = [5, 6, 7, 8, 9, 10, 11, 13, 20, 21, 22, 27]
 LED_R_PIN = 26
 LED_G_PIN = 16
 LED_B_PIN = 19
+# Range for PWM outputs (motors and LEDs) - all values are specified within the -1.0 to 1.0 range,
+# this is then used when actually sending commands to PiGPIO. In theory increasing it provides
+# smoother control, but I doubt there's any noticeable difference in reality.
 PWM_RANGE = 1000
 
 # Logger
@@ -215,7 +218,7 @@ class RedBoard:
             LOGGER.error(message, exc_info=True)
             raise RedBoardException(message)
         self.bus.write_i2c_block_data(ADC_I2C_ADDRESS, register=0x01, data=[ADC_REGISTER_ADDRESSES[adc], 0x83])
-        time.sleep(0.1)
+        # time.sleep(0.1)
         data = self.bus.read_i2c_block_data(ADC_I2C_ADDRESS, register=0x00, length=2)
         raw_voltage = data[1] + (data[0] << 8)
         return round(float(raw_voltage) / divisor, ndigits=digits)
@@ -291,6 +294,6 @@ class RedBoard:
             self.pi.set_mode(motor['pwm'], pigpio.INPUT)
         for servo in SERVO_PINS:
             self.disable_servo(servo_pin=servo)
-        self.set_led(0,0,0)
+        self.set_led(0, 0, 0)
         self.pi.stop()
         LOGGER.info('RedBoard motors stopped')
