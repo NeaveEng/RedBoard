@@ -23,6 +23,7 @@ SERVO_PINS = [5, 6, 7, 8, 9, 10, 11, 13, 20, 21, 22, 27]
 LED_R_PIN = 26
 LED_G_PIN = 16
 LED_B_PIN = 19
+PWM_RANGE = 1000
 
 # Logger
 LOGGER = logging.getLogger(name='redboard')
@@ -31,7 +32,7 @@ LOGGER = logging.getLogger(name='redboard')
 ADC_I2C_ADDRESS = 0x48
 
 # Registers to read ADC data
-ADC_REGISTER_ADDRESSES = [0xC3, 0xD3, 0xE3, 0xF3]
+ADC_REGISTER_ADDRESSES = [0xC3, 0xE3, 0xF3, 0xD3]
 
 
 class Display:
@@ -91,6 +92,7 @@ class RedBoard:
         # Configure PWM for the LED outputs
         for led_pin in [LED_R_PIN, LED_G_PIN, LED_B_PIN]:
             self.pi.set_PWM_frequency(led_pin, 1000)
+            self.pi.set_PWM_range(led_pin, PWM_RANGE)
 
         # Configure motor pulse and direction pins as outputs, set PWM frequency
         for motor in MOTORS:
@@ -98,6 +100,7 @@ class RedBoard:
             self.pi.set_mode(motor['pwm'], pigpio.OUTPUT)
             self.pi.write(motor['dir'], 0)
             self.pi.set_PWM_frequency(motor['pwm'], 1000)
+            self.pi.set_PWM_range(motor['pwm'], PWM_RANGE)
         try:
             self.bus = smbus2.SMBus(1)
         except FileNotFoundError as cause:
@@ -159,9 +162,9 @@ class RedBoard:
         Set the on-board LED to the given hue, saturation, value (0.0-1.0)
         """
         r, g, b = colorsys.hsv_to_rgb(h, s, v)
-        self.pi.set_PWM_dutycycle(LED_R_PIN, r)
-        self.pi.set_PWM_dutycycle(LED_G_PIN, g)
-        self.pi.set_PWM_dutycycle(LED_B_PIN, b)
+        self.pi.set_PWM_dutycycle(LED_R_PIN, r * PWM_RANGE)
+        self.pi.set_PWM_dutycycle(LED_G_PIN, g * PWM_RANGE)
+        self.pi.set_PWM_dutycycle(LED_B_PIN, b * PWM_RANGE)
 
     @property
     def adc0(self):
@@ -274,9 +277,9 @@ class RedBoard:
             message = 'Motor number must be between 0 and {}'.format(len(MOTORS) - 1)
             LOGGER.error(message, exc_info=True)
             raise RedBoardException(message)
-        speed = int(RedBoard._check_range(speed) * 255)
+        speed = RedBoard._check_range(speed)
         self.pi.write(MOTORS[motor]['dir'], 1 if speed > 0 else 0)
-        self.pi.set_PWM_dutycycle(MOTORS[motor]['pwm'], abs(speed))
+        self.pi.set_PWM_dutycycle(MOTORS[motor]['pwm'], abs(speed) * PWM_RANGE)
 
     def stop(self):
         """
@@ -288,5 +291,6 @@ class RedBoard:
             self.pi.set_mode(motor['pwm'], pigpio.INPUT)
         for servo in SERVO_PINS:
             self.disable_servo(servo_pin=servo)
+        self.set_led(0,0,0)
         self.pi.stop()
         LOGGER.info('RedBoard motors stopped')
