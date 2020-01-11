@@ -9,7 +9,7 @@ except ImportError:
 import logging
 import time
 
-import smbus
+import smbus2
 from PIL import ImageFont
 from luma.core.interface.serial import i2c
 from luma.core.render import canvas
@@ -94,7 +94,7 @@ class RedBoard:
             self.pi.write(motor['dir'], 0)
             self.pi.set_PWM_frequency(motor['pwm'], 1000)
         try:
-            self.bus = smbus.SMBus(1)
+            self.bus = smbus2.SMBus(1)
         except FileNotFoundError as cause:
             message = 'I2C not enabled, use raspi-config to enable and try again.'
             LOGGER.exception(message)
@@ -197,9 +197,9 @@ class RedBoard:
             message = 'ADC number must be between 0 and {}'.format(len(ADC_REGISTER_ADDRESSES) - 1)
             LOGGER.error(message, exc_info=True)
             raise RedBoardException(message)
-        self.bus.write_i2c_block_data(ADC_I2C_ADDRESS, cmd=0x01, vals=[ADC_REGISTER_ADDRESSES[adc], 0x83])
+        self.bus.write_i2c_block_data(ADC_I2C_ADDRESS, register=0x01, data=[ADC_REGISTER_ADDRESSES[adc], 0x83])
         time.sleep(0.1)
-        data = self.bus.read_i2c_block_data(ADC_I2C_ADDRESS, cmd=0x00, len=2)
+        data = self.bus.read_i2c_block_data(ADC_I2C_ADDRESS, register=0x00, length=2)
         raw_voltage = data[1] + (data[0] << 8)
         return round(float(raw_voltage) / divisor, ndigits=digits)
 
