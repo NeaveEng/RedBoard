@@ -1,0 +1,3 @@
+Required libraries:
+
+apt install libtiff5 libopenjp2-7-dev fonts-dejavu libpython3-dev libjpeg-dev

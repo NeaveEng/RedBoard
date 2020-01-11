@@ -8,6 +8,7 @@ except ImportError:
 
 import logging
 import time
+import colorsys
 
 import smbus2
 from PIL import ImageFont
@@ -19,6 +20,9 @@ from luma.oled.device import ssd1306
 MOTORS = [{'dir': 23, 'pwm': 18},
           {'dir': 24, 'pwm': 25}]
 SERVO_PINS = [5, 6, 7, 8, 9, 10, 11, 13, 20, 21, 22, 27]
+LED_R_PIN = 26
+LED_G_PIN = 16
+LED_B_PIN = 19
 
 # Logger
 LOGGER = logging.getLogger(name='redboard')
@@ -48,14 +52,11 @@ class Display:
     def text(self, line1=None, line2=None, line3=None):
         with canvas(self.oled) as draw:
             if line1 is not None:
-                draw.rectangle((0, 0), self.width, 10, fill='black')
                 draw.text((0, 0), line1, font=self.font, fill='white')
             if line2 is not None:
-                draw.rectangle((0, 11), self.width, 10, fill='black')
-                draw.text((0, 11), line1, font=self.font, fill='white')
+                draw.text((0, 11), line2, font=self.font, fill='white')
             if line3 is not None:
-                draw.rectangle((0, 12), self.width, 10, fill='black')
-                draw.text((0, 22), line1, font=self.font, fill='white')
+                draw.text((0, 22), line3, font=self.font, fill='white')
 
 
 class RedBoardException(Exception):
@@ -86,6 +87,10 @@ class RedBoard:
             LOGGER.error(message, exc_info=True)
             raise RedBoardException(message)
         self.pi = pigpio.pi()
+
+        # Configure PWM for the LED outputs
+        for led_pin in [LED_R_PIN, LED_G_PIN, LED_B_PIN]:
+            self.pi.set_PWM_frequency(led_pin, 1000)
 
         # Configure motor pulse and direction pins as outputs, set PWM frequency
         for motor in MOTORS:
@@ -148,6 +153,15 @@ class RedBoard:
             self.set_servo(servo_pin=int(key[5:]), position=value)
         else:
             super(RedBoard, self).__setattr__(key, value)
+
+    def set_led(self, h, s, v):
+        """
+        Set the on-board LED to the given hue, saturation, value (0.0-1.0)
+        """
+        r, g, b = colorsys.hsv_to_rgb(h, s, v)
+        self.pi.set_PWM_dutycycle(LED_R_PIN, r)
+        self.pi.set_PWM_dutycycle(LED_G_PIN, g)
+        self.pi.set_PWM_dutycycle(LED_B_PIN, b)
 
     @property
     def adc0(self):
@@ -262,7 +276,7 @@ class RedBoard:
             raise RedBoardException(message)
         speed = int(RedBoard._check_range(speed) * 255)
         self.pi.write(MOTORS[motor]['dir'], 1 if speed > 0 else 0)
-        self.pi.set_PRM_dutycycle(MOTORS[motor]['pwm'], abs(speed))
+        self.pi.set_PWM_dutycycle(MOTORS[motor]['pwm'], abs(speed))
 
     def stop(self):
         """
