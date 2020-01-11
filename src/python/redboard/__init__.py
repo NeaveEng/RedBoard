@@ -6,9 +6,14 @@ except ImportError:
     # actually create a RedBoard instance will fail, obviously.
     pigpio = None
 
-import smbus
 import logging
 import time
+
+import smbus
+from PIL import ImageFont
+from luma.core.interface.serial import i2c
+from luma.core.render import canvas
+from luma.oled.device import ssd1306
 
 # BCM Pin assignments
 MOTORS = [{'dir': 23, 'pwm': 18},
@@ -19,10 +24,38 @@ SERVO_PINS = [5, 6, 7, 8, 9, 10, 11, 13, 20, 21, 22, 27]
 LOGGER = logging.getLogger(name='redboard')
 
 # I2C address of the RedBoard's ADC
-I2C_ADDRESS = 0x48
+ADC_I2C_ADDRESS = 0x48
 
 # Registers to read ADC data
 ADC_REGISTER_ADDRESSES = [0xC3, 0xD3, 0xE3, 0xF3]
+
+
+class Display:
+    """
+    The mono OLED display daughterboard for the redboard
+    """
+
+    def __init__(self, width=128, height=32):
+        self.width = width
+        self.height = height
+        self.oled = ssd1306(serial=i2c(), width=width, height=height)
+        self.font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 10)
+
+    def clear(self):
+        with canvas(self.oled) as draw:
+            draw.rectangle((0, 0), self.width, self.height, fill='black')
+
+    def text(self, line1=None, line2=None, line3=None):
+        with canvas(self.oled) as draw:
+            if line1 is not None:
+                draw.rectangle((0, 0), self.width, 10, fill='black')
+                draw.text((0, 0), line1, font=self.font, fill='white')
+            if line2 is not None:
+                draw.rectangle((0, 11), self.width, 10, fill='black')
+                draw.text((0, 11), line1, font=self.font, fill='white')
+            if line3 is not None:
+                draw.rectangle((0, 12), self.width, 10, fill='black')
+                draw.text((0, 22), line1, font=self.font, fill='white')
 
 
 class RedBoardException(Exception):
@@ -99,6 +132,51 @@ class RedBoard:
             LOGGER.error(message, exc_info=True)
             raise RedBoardException(message)
 
+    def __setattr__(self, key, value):
+        """
+        Override attribute setter to handle attributes motorXX and servoXX, where XX are any legal integer, to write
+        that value to the specified servo or motor.
+
+        :param key:
+            If the key starts with 'motor' or 'servo' then intercept it, otherwise delegate to superclass
+        :param value:
+            Value to set
+        """
+        if key.startswith('motor'):
+            self.set_motor_speed(motor=int(key[5:]), speed=value)
+        elif key.startswith('servo'):
+            self.set_servo(servo_pin=int(key[5:]), position=value)
+        else:
+            super(RedBoard, self).__setattr__(key, value)
+
+    @property
+    def adc0(self):
+        """
+        Read value from ADC 0
+        """
+        return self.read_adc(adc=0)
+
+    @property
+    def adc1(self):
+        """
+        Read value from ADC 1
+        """
+        return self.read_adc(adc=1)
+
+    @property
+    def adc2(self):
+        """
+        Read value from ADC 2
+        """
+        return self.read_adc(adc=2)
+
+    @property
+    def adc3(self):
+        """
+        Read value from ADC 3
+        """
+        return self.read_adc(adc=3)
+
     def read_adc(self, adc, divisor=7891.0, digits=2):
         """
         Read from the onboard ADC. Note that ADC 0 is the battery monitor and will need a specific divisor to report
@@ -119,9 +197,9 @@ class RedBoard:
             message = 'ADC number must be between 0 and {}'.format(len(ADC_REGISTER_ADDRESSES) - 1)
             LOGGER.error(message, exc_info=True)
             raise RedBoardException(message)
-        self.bus.write_i2c_block_data(I2C_ADDRESS, cmd=0x01, vals=[ADC_REGISTER_ADDRESSES[adc], 0x83])
+        self.bus.write_i2c_block_data(ADC_I2C_ADDRESS, cmd=0x01, vals=[ADC_REGISTER_ADDRESSES[adc], 0x83])
         time.sleep(0.1)
-        data = self.bus.read_i2c_block_data(I2C_ADDRESS, cmd=0x00, len=2)
+        data = self.bus.read_i2c_block_data(ADC_I2C_ADDRESS, cmd=0x00, len=2)
         raw_voltage = data[1] + (data[0] << 8)
         return round(float(raw_voltage) / divisor, ndigits=digits)
 

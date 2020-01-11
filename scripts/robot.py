@@ -33,4 +33,4 @@ try:
             print('No controller found yet')
             sleep(1)
 except RobotStopException:
-    board.stop()
+    oard.stop()
