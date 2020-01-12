@@ -38,7 +38,7 @@ try:
         try:
             with ControllerResource() as joystick:
                 # Bound to a joystick, update the display and start driving
-                display.text(line1='Simple Robot Script', line3='Off we go!')
+                display.text(line1='Simple Robot Script', line2='Off we go!')
                 while joystick.connected:
                     # Loop while connected
                     joystick.check_presses()
@@ -48,6 +48,10 @@ try:
                     # Read left X and Y values from the controller, feed to mixer, insert into
                     # motor properties
                     board.motor0, board.motor1 = mixer(yaw=joystick.lx, throttle=joystick.ly)
+                    display.text(line1='Simple Robot Script',
+                                 line2='x={:.2f}, y={:.2f}'.format(joystick.lx, joystick.ly),
+                                 line3='Press HOME to exit.')
+                    board.set_led(joystick.ly / 4, 1, joystick.ly)
 
         except IOError:
             # Raised if there's no available controller, display this information

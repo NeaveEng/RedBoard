@@ -131,6 +131,10 @@ class RedBoard:
         return f
 
     @staticmethod
+    def _check_positive(i):
+        return RedBoard._check_range(i) if i > 0 else 0
+
+    @staticmethod
     def _check_servo_pin(servo_pin: int):
         """
         Checks that the specified servo_pin is in the SERVO_PINS list, raises RedBoardException if it isn't.
@@ -164,10 +168,12 @@ class RedBoard:
         """
         Set the on-board LED to the given hue, saturation, value (0.0-1.0)
         """
-        r, g, b = colorsys.hsv_to_rgb(h, s, v)
-        self.pi.set_PWM_dutycycle(LED_R_PIN, r * PWM_RANGE)
-        self.pi.set_PWM_dutycycle(LED_G_PIN, g * PWM_RANGE)
-        self.pi.set_PWM_dutycycle(LED_B_PIN, b * PWM_RANGE)
+        r, g, b = colorsys.hsv_to_rgb(RedBoard._check_positive(h),
+                                      RedBoard._check_positive(s),
+                                      RedBoard._check_positive(v))
+        self.pi.set_PWM_dutycycle(LED_R_PIN, RedBoard._check_positive(r) * PWM_RANGE)
+        self.pi.set_PWM_dutycycle(LED_G_PIN, RedBoard._check_positive(g) * PWM_RANGE)
+        self.pi.set_PWM_dutycycle(LED_B_PIN, RedBoard._check_positive(b) * PWM_RANGE)
 
     @property
     def adc0(self):
