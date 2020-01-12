@@ -47,12 +47,15 @@ try:
                         raise RobotStopException()
                     # Read left X and Y values from the controller, feed to mixer, insert into
                     # motor properties
-                    board.motor0, board.motor1 = mixer(yaw=joystick.lx, throttle=joystick.ly)
+                    lx, ly = joystick['lx', 'ly']
+                    board.motor0, board.motor1 = mixer(yaw=lx, throttle=ly)
                     display.text(line1='Simple Robot Script',
-                                 line2='x={:.2f}, y={:.2f}'.format(joystick.lx, joystick.ly),
+                                 line2='x={:.2f}, y={:.2f}'.format(lx, ly),
                                  line3='Press HOME to exit.')
-                    board.set_led(joystick.ly / 4, 1, joystick.ly)
-
+                    if ly >= 0:
+                        board.set_led(ly / 4, 1, ly)
+                    else:
+                        board.set_led(1 + ly / 4, 1, abs(ly))
         except IOError:
             # Raised if there's no available controller, display this information
             display.text(line1='Simple Robot Script', line3='Waiting for Controller')
