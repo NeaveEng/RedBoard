@@ -18,16 +18,15 @@ class MenuControllerTask(MenuTask):
     Use a connected gamepad as menu navigation, write out menus to the redboard's display module
     """
 
+    ACTIONS = {'dleft': MenuAction.previous,
+               'dright': MenuAction.next,
+               'cross': MenuAction.select,
+               'dup': MenuAction.up}
+
     def get_menu_action(self, world):
-        presses = world.joystick.presses
-        if 'dleft' in presses:
-            return MenuAction.previous
-        if 'dright' in presses:
-            return MenuAction.next
-        if 'cross' in presses:
-            return MenuAction.select
-        if 'dup' in presses:
-            return MenuAction.up
+        for button, action in MenuControllerTask.ACTIONS.items():
+            if button in world.joystick.presses:
+                return action
 
     def display_menu(self, world, title, item_title, item_index, item_count):
         world.display.text(line1=title,

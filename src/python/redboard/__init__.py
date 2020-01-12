@@ -6,9 +6,8 @@ except ImportError:
     # actually create a RedBoard instance will fail, obviously.
     pigpio = None
 
-import logging
-import time
 import colorsys
+import logging
 
 import smbus2
 from PIL import ImageFont
@@ -43,17 +42,56 @@ class Display:
     The mono OLED display daughterboard for the redboard
     """
 
-    def __init__(self, width=128, height=32):
+    def __init__(self, width=128, height=32, font=None, i2c_bus_number=1):
+        """
+        Create a new display. The display will be automatically cleared and shutdown when the application exits.
+
+        :param width:
+            Optional, width of the display in pixels, the redboard one is 128
+        :param height:
+            Optional, height of the display in pixels, the redboard one is 32
+        :param font:
+            Optional, a font to use, defaults to DejaVuSans 10pt. To use this ensure you've
+            installed the ``fonts-dejavu`` package with apt first.
+        :param i2c_bus_number:
+            Defaults to 1 for modern Pi boards, very old ones may need this set to 0
+        """
         self.width = width
         self.height = height
-        self.oled = ssd1306(serial=i2c(), width=width, height=height)
-        self.font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 10)
+        self.oled = ssd1306(serial=i2c(port=i2c_bus_number), width=width, height=height)
+        self.font = font if font is not None else \
+            ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 10)
 
     def clear(self):
+        """
+        Clear the display.
+        """
         with canvas(self.oled) as draw:
             draw.rectangle((0, 0), self.width, self.height, fill='black')
 
+    def draw(self, draw_function):
+        """
+        Call the provided function to draw onto the display, handling creation of the canvas and flush
+        to the display hardware on completion. Use this for custom drawing code.
+
+        :param draw_function:
+            A function which will be provided with the canvas object as its sole parameter
+        """
+        with canvas(self.oled) as draw:
+            draw_function(draw)
+
     def text(self, line1=None, line2=None, line3=None):
+        """
+        Write three lines of text to the display. The display will be cleared before writing, so this function is
+        only really useful if all you want to do is show text.
+
+        :param line1:
+            Optional, top line of text
+        :param line2:
+            Optional, middle line of text
+        :param line3:
+            Optional, bottom line of text
+        """
         with canvas(self.oled) as draw:
             if line1 is not None:
                 draw.text((0, 0), line1, font=self.font, fill='white')
@@ -71,7 +109,10 @@ class RedBoardException(Exception):
     attempts to activate a motor or servo that doesn't exist on the board (although it won't detect cases where they
     attempt to move a servo that isn't connected!)
     """
-    pass
+
+    def __init__(self, message):
+        super(RedBoardException, self).__init__(message)
+        LOGGER.error(message)
 
 
 class RedBoard:
@@ -79,17 +120,17 @@ class RedBoard:
     Access the facilities provided by the RedBoard HAT
     """
 
-    def __init__(self):
+    def __init__(self, i2c_bus_number=1):
         """
         Initialise the RedBoard, setting up SMBus and PiGPIO configuration. Probably should only do this once!
 
+        :param i2c_bus_number:
+            Defaults to 1 for modern Pi boards, very old ones may need this set to 0
         :raises:
             RedBoardException if unable to initialise
         """
         if pigpio is None:
-            message = 'PiGPIO not imported, probably not running on a Pi?'
-            LOGGER.error(message, exc_info=True)
-            raise RedBoardException(message)
+            raise RedBoardException('PiGPIO not imported, probably not running on a Pi?')
         self._pi = None
 
         # Configure PWM for the LED outputs
@@ -104,16 +145,19 @@ class RedBoard:
             self.pi.write(motor['dir'], 0)
             self.pi.set_PWM_frequency(motor['pwm'], 1000)
             self.pi.set_PWM_range(motor['pwm'], PWM_RANGE)
+
+        # Initialise the I2C bus, used for the ADC reads.
         try:
             self.bus = smbus2.SMBus(1)
         except FileNotFoundError as cause:
-            message = 'I2C not enabled, use raspi-config to enable and try again.'
-            LOGGER.exception(message)
-            raise RedBoardException(message) from cause
+            raise RedBoardException('I2C not enabled, use raspi-config to enable and try again.') from cause
         LOGGER.info('RedBoard initialised')
 
     @property
     def pi(self):
+        """
+        The pigpio instance, constructed the first time this property is requested.
+        """
         if self._pi is None:
             self._pi = pigpio.pi()
         return self._pi
@@ -138,6 +182,9 @@ class RedBoard:
 
     @staticmethod
     def _check_positive(i):
+        """
+        As with _check_range, but ensures a positive value
+        """
         return RedBoard._check_range(i) if i > 0 else 0
 
     @staticmethod
@@ -149,9 +196,7 @@ class RedBoard:
             Servo pin to check
         """
         if servo_pin not in SERVO_PINS:
-            message = '{} is not a valid pin for servo calls!'.format(servo_pin)
-            LOGGER.error(message, exc_info=True)
-            raise RedBoardException(message)
+            raise RedBoardException('{} is not a valid pin for servo calls!'.format(servo_pin))
 
     def __setattr__(self, key, value):
         """
@@ -226,14 +271,10 @@ class RedBoard:
             Measured voltage
         """
         if len(ADC_REGISTER_ADDRESSES) <= adc < 0:
-            message = 'ADC number must be between 0 and {}'.format(len(ADC_REGISTER_ADDRESSES) - 1)
-            LOGGER.error(message, exc_info=True)
-            raise RedBoardException(message)
+            raise RedBoardException('ADC number must be between 0 and {}'.format(len(ADC_REGISTER_ADDRESSES) - 1))
         self.bus.write_i2c_block_data(ADC_I2C_ADDRESS, register=0x01, data=[ADC_REGISTER_ADDRESSES[adc], 0x83])
-        # time.sleep(0.1)
         data = self.bus.read_i2c_block_data(ADC_I2C_ADDRESS, register=0x00, length=2)
-        raw_voltage = data[1] + (data[0] << 8)
-        return round(float(raw_voltage) / divisor, ndigits=digits)
+        return round(float(data[1] + (data[0] << 8)) / divisor, ndigits=digits)
 
     def set_servo(self, servo_pin: int, position: float, pulse_min=500, pulse_max=2500):
         """
@@ -289,9 +330,7 @@ class RedBoard:
             silently.
         """
         if len(MOTORS) <= motor < 0:
-            message = 'Motor number must be between 0 and {}'.format(len(MOTORS) - 1)
-            LOGGER.error(message, exc_info=True)
-            raise RedBoardException(message)
+            raise RedBoardException('Motor number must be between 0 and {}'.format(len(MOTORS) - 1))
         speed = RedBoard._check_range(speed)
         self.pi.write(MOTORS[motor]['dir'], 1 if speed > 0 else 0)
         self.pi.set_PWM_dutycycle(MOTORS[motor]['pwm'], abs(speed) * PWM_RANGE)
@@ -299,11 +338,11 @@ class RedBoard:
     def stop(self):
         """
         SHUT IT DOWN! Equivalent to setting all motor speeds to zero and calling disable_servo on all available servo
-        outputs, then calling stop() on the PiGPIO instance.
+        outputs, then calling stop() on the PiGPIO instance. Any subsequent calls that would need pigpio will restart
+        it as a side effect, so it's safe to call this even if you've not completely finished with the board.
         """
         for motor in MOTORS:
             self.pi.set_PWM_dutycycle(motor['pwm'], 0)
-            self.pi.set_mode(motor['pwm'], pigpio.INPUT)
         for servo in SERVO_PINS:
             self.disable_servo(servo_pin=servo)
         self.set_led(0, 0, 0)
