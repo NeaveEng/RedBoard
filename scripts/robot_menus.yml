@@ -1,6 +1,7 @@
-- menu:
-    name: main_menu
-    title: RedBoard Test Script
-    items:
-      - title: Manual Control
-        task: drive
+- name: main_menu
+  title: RedBoard Test Script
+  items:
+    - title: Manual Control
+      task: drive
+    - title: Exit
+      task: exit
