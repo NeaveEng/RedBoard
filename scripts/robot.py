@@ -59,7 +59,9 @@ def turn_off(board):
     return 'main_menu'
 
 
-register_menu_tasks_from_yaml('robot_menus.yml')
+register_menu_tasks_from_yaml('robot_menus.yml',
+                              menu_task_class=MenuControllerTask,
+                              resources=['joystick', 'display'])
 
 while True:
     # Loop forever until something raises RobotStopException
