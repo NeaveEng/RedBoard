@@ -1,0 +1,6 @@
+- menu:
+    name: main_menu
+    title: RedBoard Test Script
+    items:
+      - title: Manual Control
+        task: drive
