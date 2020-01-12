@@ -52,8 +52,6 @@ def manual_control(joystick, display, board):
     set motor values on the redboard's main motors, as well as showing information on
     the display and lighting up the LED.
     """
-    if 'home' in joystick.presses:
-        return 'stop'
     lx, ly = joystick['lx', 'ly']
     board.motor0, board.motor1 = mixer(yaw=lx, throttle=ly)
     display.text(line1='Simple Robot Script',
