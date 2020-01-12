@@ -90,7 +90,7 @@ class RedBoard:
             message = 'PiGPIO not imported, probably not running on a Pi?'
             LOGGER.error(message, exc_info=True)
             raise RedBoardException(message)
-        self.pi = pigpio.pi()
+        self._pi = None
 
         # Configure PWM for the LED outputs
         for led_pin in [LED_R_PIN, LED_G_PIN, LED_B_PIN]:
@@ -111,6 +111,12 @@ class RedBoard:
             LOGGER.exception(message)
             raise RedBoardException(message) from cause
         LOGGER.info('RedBoard initialised')
+
+    @property
+    def pi(self):
+        if self._pi is None:
+            self._pi = pigpio.pi()
+        return self._pi
 
     @staticmethod
     def _check_range(i):
@@ -302,4 +308,5 @@ class RedBoard:
             self.disable_servo(servo_pin=servo)
         self.set_led(0, 0, 0)
         self.pi.stop()
+        self._pi = None
         LOGGER.info('RedBoard motors stopped')
