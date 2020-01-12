@@ -3,10 +3,11 @@
 from approxeng.input.selectbinder import ControllerResource
 from redboard import RedBoard, Display
 from time import sleep
-from approxeng.task import task, run, register_resource
+from approxeng.task import task, run, register_resource, TaskStop
 from approxeng.task.menu import register_menu_tasks_from_yaml, MenuTask, MenuAction
 
-# Initialise the RedBoard and its attached OLED display
+# Initialise the RedBoard and its attached OLED display, register them
+# as named resources to make them available to tasks later.
 register_resource(name='board', value=RedBoard())
 display = Display()
 register_resource(name='display', value=display)
@@ -18,20 +19,26 @@ class MenuControllerTask(MenuTask):
     """
 
     def get_menu_action(self, world):
-        if 'dleft' in world.joystick.presses:
+        presses = world.joystick.presses
+        if 'dleft' in presses:
             return MenuAction.previous
-        if 'dright' in world.joystick.presses:
+        if 'dright' in presses:
             return MenuAction.next
-        if 'cross' in world.joystick.presses:
+        if 'cross' in presses:
             return MenuAction.select
-        if 'dup' in world.joystick.presses:
+        if 'dup' in presses:
             return MenuAction.up
 
     def display_menu(self, world, title, item_title, item_index, item_count):
-        world.display.text(line1=title, line2=item_title, line3='{}/{}'.format(item_index + 1, item_count))
+        world.display.text(line1=title,
+                           line2=item_title,
+                           line3='{}/{}'.format(item_index + 1, item_count))
 
 
 def mixer(yaw, throttle):
+    """
+    Map x and y joystick axes to a pair of motor speeds
+    """
     left = throttle + yaw
     right = throttle - yaw
     scale = 1.0 / max(1, abs(left), abs(right))
@@ -40,6 +47,11 @@ def mixer(yaw, throttle):
 
 @task(name='drive')
 def manual_control(joystick, display, board):
+    """
+    Manual control task, reads information from the left analogue stick and uses it to
+    set motor values on the redboard's main motors, as well as showing information on
+    the display and lighting up the LED.
+    """
     if 'home' in joystick.presses:
         return 'stop'
     lx, ly = joystick['lx', 'ly']
@@ -55,16 +67,20 @@ def manual_control(joystick, display, board):
 
 @task(name='stop')
 def turn_off(board):
+    """
+    Turns off any motors and redirects back to the main menu.
+    """
     board.stop()
     return 'main_menu'
 
 
+# Load menus from a YAML file
 register_menu_tasks_from_yaml('robot_menus.yml',
                               menu_task_class=MenuControllerTask,
                               resources=['joystick', 'display'])
 
+# Loop forever until a task exits for a reason other than disconnection
 while True:
-    # Loop forever until something raises RobotStopException
     try:
         with ControllerResource() as joystick:
 
@@ -73,19 +89,27 @@ while True:
 
 
             def check_joystick():
-                # Check whether the joystick is connected
+                """
+                Called before every tick, sets up button presses, checks for joystick
+                disconnection, and bounces back to the home menu via a motor shutdown
+                task if the home button is pressed.
+                """
                 if not joystick.connected:
-                    # Returning True from here exists the task loop
-                    return True
-                # Check for presses before calling the active task
+                    return TaskStop('disconnection')
                 joystick.check_presses()
-                # If home button pressed, jump to the main_menu task
                 if 'home' in joystick.presses:
-                    return 'main_menu'
+                    return 'stop'
 
 
-            run(root_task='main_menu', check_tasks=[check_joystick])
+            # Run the task loop
+            exit_reason = run(root_task='main_menu',
+                              error_task='stop',
+                              check_tasks=[check_joystick])
 
+            # If we disconnected then wait for reconnection, otherwise break out
+            # and exit the script.
+            if exit_reason is not 'disconnection':
+                break
 
     except IOError:
         # Raised if there's no available controller, display this information
