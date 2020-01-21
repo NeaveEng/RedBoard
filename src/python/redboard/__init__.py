@@ -8,6 +8,7 @@ except ImportError:
 
 import colorsys
 import logging
+import re
 
 import smbus2
 from PIL import ImageFont
@@ -129,6 +130,12 @@ class RedBoard:
         :raises:
             RedBoardException if unable to initialise
         """
+
+        # Regular expressions, allos for e.g. board.m2=0.5, or board.servo21=-0.2 as an alternative to calling
+        # set_speed or similar
+        self.motor_regex = re.compile('m(?:otor)?(\d+)')
+        self.servo_regex = re.compile('s(?:ervo)?(\d+)')
+
         if pigpio is None:
             raise RedBoardException('PiGPIO not imported, probably not running on a Pi?')
         self._pi = None
@@ -151,6 +158,15 @@ class RedBoard:
             self.bus = smbus2.SMBus(1)
         except FileNotFoundError as cause:
             raise RedBoardException('I2C not enabled, use raspi-config to enable and try again.') from cause
+
+        # Check for I2C based expansions. This is an array of I2C addresses for motor expansion boards. Each
+        # board provides a pair of motor controllers, these are assigned to motor numbers following the built-in
+        # ones, and in the order specified here. So if you have two boards [a,b] then motors 2 and 3 will be on 'a'
+        # and 4 and 5 on 'b', with 0 and 1 being the built-in ones.
+        self.i2c_motor_expansions = []
+
+        self.num_motors = len(MOTORS) + (len(self.i2c_motor_expansions) * 2)
+
         LOGGER.info('RedBoard initialised')
 
     @property
@@ -201,19 +217,22 @@ class RedBoard:
     def __setattr__(self, key, value):
         """
         Override attribute setter to handle attributes motorXX and servoXX, where XX are any legal integer, to write
-        that value to the specified servo or motor.
+        that value to the specified servo or motor. Also allows mXX or sXX as a more concise form.
 
         :param key:
             If the key starts with 'motor' or 'servo' then intercept it, otherwise delegate to superclass
         :param value:
             Value to set
         """
-        if key.startswith('motor'):
-            self.set_motor_speed(motor=int(key[5:]), speed=value)
-        elif key.startswith('servo'):
-            self.set_servo(servo_pin=int(key[5:]), position=value)
-        else:
-            super(RedBoard, self).__setattr__(key, value)
+        match = self.motor_regex.match(key)
+        if match is not None:
+            self.set_motor_speed(motor=int(match.group(1)), speed=value)
+            return
+        match = self.servo_regex.match(key)
+        if match is not None:
+            self.set_servo(servo_pin=int(match.group(1)), position=value)
+            return
+        super(RedBoard, self).__setattr__(key, value)
 
     def set_led(self, h, s, v):
         """
@@ -323,17 +342,25 @@ class RedBoard:
         Set the speed of a motor
 
         :param motor:
-            The motor to set, 0 sets speed on motor A, 1 on motor B. Other values are currently ignored but may
-            be used for future expansion.
+            The motor to set, 0 sets speed on motor A, 1 on motor B. If any I2C expansions are defined this will also
+            accept higher number motors, where pairs of motors are allocated to each expansion address in turn.
         :param speed:
             Speed between -1.0 and 1.0. If a value is supplied outside this range it will be clamped to this range
             silently.
         """
-        if len(MOTORS) <= motor < 0:
-            raise RedBoardException('Motor number must be between 0 and {}'.format(len(MOTORS) - 1))
-        speed = RedBoard._check_range(speed)
-        self.pi.write(MOTORS[motor]['dir'], 1 if speed > 0 else 0)
-        self.pi.set_PWM_dutycycle(MOTORS[motor]['pwm'], abs(speed) * PWM_RANGE)
+
+        if self.num_motors <= motor < 0:
+            raise RedBoardException('Motor number must be between 0 and {}'.format(self.num_motors - 1))
+        if motor < len(MOTORS):
+            # Using the built-in motor drivers on the board
+            speed = RedBoard._check_range(speed)
+            self.pi.write(MOTORS[motor]['dir'], 1 if speed > 0 else 0)
+            self.pi.set_PWM_dutycycle(MOTORS[motor]['pwm'], abs(speed) * PWM_RANGE)
+        else:
+            # Using an I2C expansion board
+            i2c_address = self.i2c_motor_expansions[(motor - len(MOTORS)) // 2]
+            i2c_motor_number = (motor - len(MOTORS)) % 2
+            # TODO - implement I2C motor control logic when Neil sends me a board to test
 
     def stop(self):
         """
