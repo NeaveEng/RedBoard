@@ -155,7 +155,7 @@ class RedBoard:
 
         # Initialise the I2C bus, used for the ADC reads.
         try:
-            self.bus = smbus2.SMBus(1)
+            self.bus = smbus2.SMBus(i2c_bus_number)
         except FileNotFoundError as cause:
             raise RedBoardException('I2C not enabled, use raspi-config to enable and try again.') from cause
 
@@ -218,19 +218,23 @@ class RedBoard:
         that value to the specified servo or motor. Also allows mXX or sXX as a more concise form.
 
         :param key:
-            If the key starts with 'motor' or 'servo' then intercept it, otherwise delegate to superclass
+            If the key isn't found in this class, and starts with 'motor' or 'servo' then intercept it, otherwise
+            if it was found then use normal parameter set, and if not raise AttributeError
         :param value:
             Value to set
         """
-        match = self.motor_regex.match(key)
-        if match is not None:
-            self.set_motor_speed(motor=int(match.group(1)), speed=value)
-            return
-        match = self.servo_regex.match(key)
-        if match is not None:
-            self.set_servo(servo_pin=int(match.group(1)), position=value)
-            return
-        super(RedBoard, self).__setattr__(key, value)
+        try:
+            return super(RedBoard, self).__setattr__(key, value)
+        except AttributeError:
+            match = self.motor_regex.match(key)
+            if match is not None:
+                self.set_motor_speed(motor=int(match.group(1)), speed=value)
+                return
+            match = self.servo_regex.match(key)
+            if match is not None:
+                self.set_servo(servo_pin=int(match.group(1)), position=value)
+                return
+            raise
 
     def set_led(self, h, s, v):
         """
