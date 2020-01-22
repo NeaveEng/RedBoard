@@ -9,8 +9,8 @@ from approxeng.task.menu import register_menu_tasks_from_yaml, MenuTask, MenuAct
 # Initialise the RedBoard and its attached OLED display, register them
 # as named resources to make them available to tasks later.
 register_resource(name='board', value=RedBoard())
-display = Display()
-register_resource(name='display', value=display)
+oled_display = Display()
+register_resource(name='display', value=oled_display)
 
 
 class MenuControllerTask(MenuTask):
@@ -56,10 +56,7 @@ def manual_control(joystick, display, board):
     display.text(line1='Simple Robot Script',
                  line2='x={:.2f}, y={:.2f}'.format(lx, ly),
                  line3='Press HOME to exit.')
-    if ly >= 0:
-        board.set_led(ly / 4, 1, ly)
-    else:
-        board.set_led(1 + ly / 4, 1, abs(ly))
+    board.set_led(ly / 4, 1, ly) if ly >= 0 else board.set_led(1 + ly / 4, 1, abs(ly))
 
 
 @task(name='stop')
@@ -79,10 +76,10 @@ register_menu_tasks_from_yaml('robot_menus.yml',
 # Loop forever until a task exits for a reason other than disconnection
 while True:
     try:
-        with ControllerResource() as joystick:
+        with ControllerResource() as controller:
 
             # Tell the task system about the joystick
-            register_resource('joystick', joystick)
+            register_resource('joystick', controller)
 
 
             def check_joystick():
@@ -91,10 +88,10 @@ while True:
                 disconnection, and bounces back to the home menu via a motor shutdown
                 task if the home button is pressed.
                 """
-                if not joystick.connected:
+                if not controller.connected:
                     return TaskStop('disconnection')
-                joystick.check_presses()
-                if 'home' in joystick.presses:
+                controller.check_presses()
+                if 'home' in controller.presses:
                     return 'stop'
 
 
@@ -110,5 +107,5 @@ while True:
 
     except IOError:
         # Raised if there's no available controller, display this information
-        display.text(line1='Simple Robot Script', line3='Waiting for Controller')
+        oled_display.text(line1='Simple Robot Script', line3='Waiting for Controller')
         sleep(1)
