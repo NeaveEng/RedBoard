@@ -121,7 +121,7 @@ class RedBoard:
     Access the facilities provided by the RedBoard HAT
     """
 
-    def __init__(self, i2c_bus_number=1):
+    def __init__(self, i2c_bus_number=1, motor_expansion_addresses=None):
         """
         Initialise the RedBoard, setting up SMBus and PiGPIO configuration. Probably should only do this once!
 
@@ -163,10 +163,8 @@ class RedBoard:
         # board provides a pair of motor controllers, these are assigned to motor numbers following the built-in
         # ones, and in the order specified here. So if you have two boards [a,b] then motors 2 and 3 will be on 'a'
         # and 4 and 5 on 'b', with 0 and 1 being the built-in ones.
-        self.i2c_motor_expansions = []
-
+        self.i2c_motor_expansions = [] if motor_expansion_addresses is None else motor_expansion_addresses
         self.num_motors = len(MOTORS) + (len(self.i2c_motor_expansions) * 2)
-
         LOGGER.info('RedBoard initialised')
 
     @property
@@ -348,28 +346,31 @@ class RedBoard:
             Speed between -1.0 and 1.0. If a value is supplied outside this range it will be clamped to this range
             silently.
         """
-
+        speed = RedBoard._check_range(speed)
         if self.num_motors <= motor < 0:
             raise RedBoardException('Motor number must be between 0 and {}'.format(self.num_motors - 1))
         if motor < len(MOTORS):
             # Using the built-in motor drivers on the board
-            speed = RedBoard._check_range(speed)
             self.pi.write(MOTORS[motor]['dir'], 1 if speed > 0 else 0)
             self.pi.set_PWM_dutycycle(MOTORS[motor]['pwm'], abs(speed) * PWM_RANGE)
         else:
             # Using an I2C expansion board
             i2c_address = self.i2c_motor_expansions[(motor - len(MOTORS)) // 2]
             i2c_motor_number = (motor - len(MOTORS)) % 2
-            # TODO - implement I2C motor control logic when Neil sends me a board to test
+            self.bus.write_i2c_block_data(i2c_addr=i2c_address,
+                                          register=0x30 if i2c_motor_number == 0 else 0x40,
+                                          data=[1 if speed >= 0 else 0, abs(speed) * 255])
 
     def stop(self):
         """
         SHUT IT DOWN! Equivalent to setting all motor speeds to zero and calling disable_servo on all available servo
         outputs, then calling stop() on the PiGPIO instance. Any subsequent calls that would need pigpio will restart
         it as a side effect, so it's safe to call this even if you've not completely finished with the board.
+
+        Also sets the speed on any connected I2C motor expansions to 0
         """
-        for motor in MOTORS:
-            self.pi.set_PWM_dutycycle(motor['pwm'], 0)
+        for motor in range(len(MOTORS) + len(self.i2c_motor_expansions) * 2):
+            self.set_motor_speed(motor, 0)
         for servo in SERVO_PINS:
             self.disable_servo(servo_pin=servo)
         self.set_led(0, 0, 0)
