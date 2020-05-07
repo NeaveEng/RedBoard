@@ -1,15 +1,8 @@
-try:
-    import pigpio
-except ImportError:
-    # This is fine, we expect import failures when running on a non-pi machine which we need to
-    # do when generating documentation etc etc. It'll import just fine like this, but any attempt to
-    # actually create a RedBoard instance will fail, obviously.
-    pigpio = None
-
 import colorsys
 import logging
-import re
 
+import pigpio
+import re
 import smbus2
 from PIL import ImageFont
 from luma.core.interface.serial import i2c
@@ -30,6 +23,7 @@ PWM_RANGE = 1000
 
 # Logger
 LOGGER = logging.getLogger(name='redboard')
+logging.basicConfig(level=logging.DEBUG)
 
 # I2C address of the RedBoard's ADC
 ADC_I2C_ADDRESS = 0x48
@@ -121,12 +115,21 @@ class RedBoard:
     Access the facilities provided by the RedBoard HAT
     """
 
-    def __init__(self, i2c_bus_number=1, motor_expansion_addresses=None):
+    def __init__(self, i2c_bus_number=1, motor_expansion_addresses=None, pulse_min=500, pulse_max=2500):
         """
         Initialise the RedBoard, setting up SMBus and PiGPIO configuration. Probably should only do this once!
 
         :param i2c_bus_number:
             Defaults to 1 for modern Pi boards, very old ones may need this set to 0
+        :param motor_expansion_addresses:
+            I2C addresses of any MX boards attached to the redboard. The address of an MX2 board with neither
+            address bridged is 0x30
+        :param pulse_min:
+            Minimum pulse width (in microseconds) to supply to attached servo motors. Defaults to 500, although
+            this will overdrive most servos. The standard value for this would be 1000
+        :param pulse_max:
+            Maximum pulse width (in microseconds) to supply to attached servo motors. Defaults to 2500, although
+            this will overdrive most servos. The standard value for this would be 2000
         :raises:
             RedBoardException if unable to initialise
         """
@@ -136,8 +139,6 @@ class RedBoard:
         self.motor_regex = re.compile('m(?:otor)?(\d+)')
         self.servo_regex = re.compile('s(?:ervo)?(\d+)')
 
-        if pigpio is None:
-            raise RedBoardException('PiGPIO not imported, probably not running on a Pi?')
         self._pi = None
 
         # Configure PWM for the LED outputs
@@ -147,11 +148,15 @@ class RedBoard:
 
         # Configure motor pulse and direction pins as outputs, set PWM frequency
         for motor in MOTORS:
-            self.pi.set_mode(motor['dir'], pigpio.OUTPUT)
-            self.pi.set_mode(motor['pwm'], pigpio.OUTPUT)
-            self.pi.write(motor['dir'], 0)
-            self.pi.set_PWM_frequency(motor['pwm'], 1000)
-            self.pi.set_PWM_range(motor['pwm'], PWM_RANGE)
+            pwm = motor['pwm']
+            dir = motor['dir']
+            self.pi.set_mode(dir, pigpio.OUTPUT)
+            self.pi.set_mode(pwm, pigpio.OUTPUT)
+            self.pi.write(dir, 0)
+            self.pi.set_PWM_frequency(pwm, 1000)
+            self.pi.set_PWM_range(pwm, PWM_RANGE)
+            self.pi.set_PWM_dutycycle(pwm, 0)
+            self._show_pwm_info(pwm)
 
         # Initialise the I2C bus, used for the ADC reads.
         try:
@@ -165,7 +170,15 @@ class RedBoard:
         # and 4 and 5 on 'b', with 0 and 1 being the built-in ones.
         self.i2c_motor_expansions = [] if motor_expansion_addresses is None else motor_expansion_addresses
         self.num_motors = len(MOTORS) + (len(self.i2c_motor_expansions) * 2)
+        self.pulse_min = pulse_min
+        self.pulse_max = pulse_max
+        self.init = True
         LOGGER.info('RedBoard initialised')
+
+    def _show_pwm_info(self, pwm):
+        LOGGER.debug(f'Motor pwm pin {pwm}, range={self.pi.get_PWM_range(pwm)}, '
+                     f'frequency={self.pi.get_PWM_frequency(pwm)}, '
+                     f'duty_cycle={self.pi.get_PWM_dutycycle(pwm)}')
 
     @property
     def pi(self):
@@ -173,6 +186,7 @@ class RedBoard:
         The pigpio instance, constructed the first time this property is requested.
         """
         if self._pi is None:
+            LOGGER.debug('Creating new instance of pigpio.pi()')
             self._pi = pigpio.pi()
         return self._pi
 
@@ -224,17 +238,21 @@ class RedBoard:
             Value to set
         """
         try:
-            return super(RedBoard, self).__setattr__(key, value)
+            _ = self.init
         except AttributeError:
-            match = self.motor_regex.match(key)
-            if match is not None:
-                self.set_motor_speed(motor=int(match.group(1)), speed=value)
-                return
-            match = self.servo_regex.match(key)
-            if match is not None:
-                self.set_servo(servo_pin=int(match.group(1)), position=value)
-                return
-            raise
+            # means we haven't initialised, handle normally
+            return super(RedBoard, self).__setattr__(key, value)
+        match = self.motor_regex.match(key)
+        if match is not None:
+            LOGGER.debug(f'Setting motor[{match.group(1)}]={value}')
+            self.set_motor_speed(motor=int(match.group(1)), speed=value)
+            return
+        match = self.servo_regex.match(key)
+        if match is not None:
+            LOGGER.debug(f'Setting servo[{match.group(1)}]={value}')
+            self.set_servo(servo_pin=int(match.group(1)), position=value)
+            return
+        return super(RedBoard, self).__setattr__(key, value)
 
     def set_led(self, h, s, v):
         """
@@ -250,9 +268,10 @@ class RedBoard:
     @property
     def adc0(self):
         """
-        Read value from ADC 0
+        Read value from ADC 0 - this monitors the voltage of the power supply to the redboard,
+        and uses a different divisor to the other ADC inputs.
         """
-        return self.read_adc(adc=0)
+        return self.read_adc(adc=0, digits=2, divisor=1110)
 
     @property
     def adc1(self):
@@ -297,7 +316,7 @@ class RedBoard:
         data = self.bus.read_i2c_block_data(ADC_I2C_ADDRESS, register=0x00, length=2)
         return round(float(data[1] + (data[0] << 8)) / divisor, ndigits=digits)
 
-    def set_servo(self, servo_pin: int, position: float, pulse_min=500, pulse_max=2500):
+    def set_servo(self, servo_pin: int, position: float, pulse_min=None, pulse_max=None):
         """
         Set a servo pulse width value
 
@@ -315,12 +334,12 @@ class RedBoard:
         :raises:
             RedBoardException if the specified pin isn't a servo output
         """
-
+        pulse_min = pulse_min or self.pulse_min
+        pulse_max = pulse_max or self.pulse_max
         RedBoard._check_servo_pin(servo_pin)
         position = RedBoard._check_range(position)
 
-        # Actual servo PWM values need to be between 500 and 2500 at the extreme ends of the
-        # input range, and should be 2500 at -1, and 500 at 1.
+        # Scale to a value pulse_min at -1, pulse_max at +1
         scale = float((pulse_max - pulse_min) / 2)
         centre = float((pulse_max + pulse_min) / 2)
         self.pi.set_servo_pulsewidth(servo_pin, int(centre - scale * position))
@@ -351,19 +370,20 @@ class RedBoard:
             silently.
         """
         speed = RedBoard._check_range(speed)
-        if self.num_motors <= motor < 0:
+        if not self.num_motors > motor >= 0:
             raise RedBoardException('Motor number must be between 0 and {}'.format(self.num_motors - 1))
         if motor < len(MOTORS):
             # Using the built-in motor drivers on the board
             self.pi.write(MOTORS[motor]['dir'], 1 if speed > 0 else 0)
             self.pi.set_PWM_dutycycle(MOTORS[motor]['pwm'], abs(speed) * PWM_RANGE)
+            self._show_pwm_info(MOTORS[motor]['pwm'])
         else:
             # Using an I2C expansion board
             i2c_address = self.i2c_motor_expansions[(motor - len(MOTORS)) // 2]
             i2c_motor_number = (motor - len(MOTORS)) % 2
             self.bus.write_i2c_block_data(i2c_addr=i2c_address,
                                           register=0x30 if i2c_motor_number == 0 else 0x40,
-                                          data=[1 if speed >= 0 else 0, abs(speed) * 255])
+                                          data=[1 if speed >= 0 else 0, int(abs(speed) * 255)])
 
     def stop(self):
         """
