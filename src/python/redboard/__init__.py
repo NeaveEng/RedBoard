@@ -1,3 +1,5 @@
+# -*- coding: future_fstrings -*-
+
 import colorsys
 import logging
 
@@ -20,6 +22,7 @@ LED_B_PIN = 19
 # this is then used when actually sending commands to PiGPIO. In theory increasing it provides
 # smoother control, but I doubt there's any noticeable difference in reality.
 PWM_RANGE = 1000
+PWM_FREQUENCY = 1000
 
 # Logger
 LOGGER = logging.getLogger(name='redboard')
@@ -115,7 +118,72 @@ class RedBoard:
     Access the facilities provided by the RedBoard HAT
     """
 
-    def __init__(self, i2c_bus_number=1, motor_expansion_addresses=None, pulse_min=500, pulse_max=2500):
+    class Servo:
+        """
+        Holds configuration for a servo pin
+        """
+
+        def __init__(self, servo, pulse_min, pulse_max, redboard):
+            self.servo = servo
+            self.pulse_max = pulse_max
+            self.pulse_min = pulse_min
+            self.value = None
+            self.redboard = redboard
+
+        def set_value(self, _, value):
+            if value is not None:
+                if not isinstance(value, (float, int)):
+                    raise ValueError(f's{self.servo} value must be float or None, was {value}')
+                self.redboard.set_servo(servo_pin=self.servo, position=value)
+            else:
+                self.redboard.disable_servo(servo_pin=self.servo)
+
+        def get_value(self, _):
+            return self.value
+
+        def set_config(self, _, value):
+            new_pulse_min, new_pulse_max = value
+            if new_pulse_min is not None and not isinstance(new_pulse_min, int):
+                raise ValueError(f'pulse_min must be None or int, was {new_pulse_min}')
+            if new_pulse_max is not None and not isinstance(new_pulse_max, int):
+                raise ValueError(f'pulse_max must be None or int, was {new_pulse_max}')
+            self.pulse_min = new_pulse_min or self.pulse_min
+            self.pulse_max = new_pulse_max or self.pulse_max
+            if self.value is not None:
+                # If we have an active value set then update based on the new
+                # configured pulse min / max values
+                self.set_value(_, self.value)
+
+        def get_config(self, _):
+            return self.pulse_min, self.pulse_max
+
+    class Motor:
+        """
+        Holds configuration for a motor
+        """
+
+        def __init__(self, motor, invert, redboard):
+            self.motor = motor
+            self.invert = invert
+            self.redboard = redboard
+            self.value = None
+
+        def set_value(self, _, value):
+            self.redboard.set_motor_speed(motor=self.motor, speed=value)
+
+        def get_value(self, _):
+            return self.value
+
+        def set_invert(self, _, value):
+            if value is None or not isinstance(value, bool):
+                raise ValueError(f'm{self.motor}_invert must be True|False, was {value}')
+            self.invert = value
+
+        def get_invert(self, _):
+            return self.invert
+
+    def __init__(self, i2c_bus_number=1, motor_expansion_addresses=None, pulse_min=500, pulse_max=2500,
+                 stop_motors=True, pwm_frequency=PWM_FREQUENCY, pwm_range=PWM_RANGE):
         """
         Initialise the RedBoard, setting up SMBus and PiGPIO configuration. Probably should only do this once!
 
@@ -126,25 +194,28 @@ class RedBoard:
             address bridged is 0x30
         :param pulse_min:
             Minimum pulse width (in microseconds) to supply to attached servo motors. Defaults to 500, although
-            this will overdrive most servos. The standard value for this would be 1000
+            this will overdrive most servos. The standard value for this would be 1000.
         :param pulse_max:
             Maximum pulse width (in microseconds) to supply to attached servo motors. Defaults to 2500, although
             this will overdrive most servos. The standard value for this would be 2000
+        :param stop_motors:
+            If set to true (the default) all motors will be set to 0 speed when this object is created, otherwise
+            no set speed call will be made
+
         :raises:
             RedBoardException if unable to initialise
         """
 
-        # Regular expressions, allos for e.g. board.m2=0.5, or board.servo21=-0.2 as an alternative to calling
-        # set_speed or similar
-        self.motor_regex = re.compile('m(?:otor)?(\d+)')
-        self.servo_regex = re.compile('s(?:ervo)?(\d+)')
-
         self._pi = None
+        self._pwm_frequency = pwm_frequency
+        self._pwm_range = pwm_range
+
+        self._config = {'motors': {}, 'servos': {}}
 
         # Configure PWM for the LED outputs
         for led_pin in [LED_R_PIN, LED_G_PIN, LED_B_PIN]:
-            self.pi.set_PWM_frequency(led_pin, 1000)
-            self.pi.set_PWM_range(led_pin, PWM_RANGE)
+            self.pi.set_PWM_frequency(led_pin, self._pwm_frequency)
+            self.pi.set_PWM_range(led_pin, self._pwm_range)
 
         # Configure motor pulse and direction pins as outputs, set PWM frequency
         for motor in MOTORS:
@@ -152,10 +223,11 @@ class RedBoard:
             dir = motor['dir']
             self.pi.set_mode(dir, pigpio.OUTPUT)
             self.pi.set_mode(pwm, pigpio.OUTPUT)
-            self.pi.write(dir, 0)
-            self.pi.set_PWM_frequency(pwm, 1000)
-            self.pi.set_PWM_range(pwm, PWM_RANGE)
-            self.pi.set_PWM_dutycycle(pwm, 0)
+            self.pi.set_PWM_frequency(pwm, self._pwm_frequency)
+            self.pi.set_PWM_range(pwm, self._pwm_range)
+            if stop_motors:
+                self.pi.write(dir, 0)
+                self.pi.set_PWM_dutycycle(pwm, 0)
             self._show_pwm_info(pwm)
 
         # Initialise the I2C bus, used for the ADC reads.
@@ -170,9 +242,20 @@ class RedBoard:
         # and 4 and 5 on 'b', with 0 and 1 being the built-in ones.
         self.i2c_motor_expansions = [] if motor_expansion_addresses is None else motor_expansion_addresses
         self.num_motors = len(MOTORS) + (len(self.i2c_motor_expansions) * 2)
-        self.pulse_min = pulse_min
-        self.pulse_max = pulse_max
-        self.init = True
+
+        # Set up motor and servo properties, theses are injected into this instance as regular property object
+        # with empty get functions, and set functions which delegate to set_motor_speed and set_serv
+        for motor in range(0, self.num_motors):
+            m = RedBoard.Motor(motor=motor, invert=False, redboard=self)
+            self._config['motors'][motor] = m
+            setattr(self.__class__, f'm{motor}', property(fget=m.get_value, fset=m.set_value))
+            setattr(self.__class__, f'm{motor}_invert', property(fset=m.set_invert, fget=m.get_invert))
+        for servo in SERVO_PINS:
+            s = RedBoard.Servo(servo=servo, pulse_min=pulse_min, pulse_max=pulse_max, redboard=self)
+            self._config['servos'][servo] = s
+            setattr(self.__class__, f's{servo}', property(fset=s.set_value, fget=s.get_value))
+            setattr(self.__class__, f's{servo}_config', property(fset=s.set_config, fget=s.get_config))
+
         LOGGER.info('RedBoard initialised')
 
     def _show_pwm_info(self, pwm):
@@ -224,35 +307,7 @@ class RedBoard:
             Servo pin to check
         """
         if servo_pin not in SERVO_PINS:
-            raise RedBoardException('{} is not a valid pin for servo calls!'.format(servo_pin))
-
-    def __setattr__(self, key, value):
-        """
-        Override attribute setter to handle attributes motorXX and servoXX, where XX are any legal integer, to write
-        that value to the specified servo or motor. Also allows mXX or sXX as a more concise form.
-
-        :param key:
-            If the key isn't found in this class, and starts with 'motor' or 'servo' then intercept it, otherwise
-            if it was found then use normal parameter set, and if not raise AttributeError
-        :param value:
-            Value to set
-        """
-        try:
-            _ = self.init
-        except AttributeError:
-            # means we haven't initialised, handle normally
-            return super(RedBoard, self).__setattr__(key, value)
-        match = self.motor_regex.match(key)
-        if match is not None:
-            LOGGER.debug(f'Setting motor[{match.group(1)}]={value}')
-            self.set_motor_speed(motor=int(match.group(1)), speed=value)
-            return
-        match = self.servo_regex.match(key)
-        if match is not None:
-            LOGGER.debug(f'Setting servo[{match.group(1)}]={value}')
-            self.set_servo(servo_pin=int(match.group(1)), position=value)
-            return
-        return super(RedBoard, self).__setattr__(key, value)
+            raise RedBoardException(f'{servo_pin} is not a valid pin for servo calls!')
 
     def set_led(self, h, s, v):
         """
@@ -261,9 +316,9 @@ class RedBoard:
         r, g, b = colorsys.hsv_to_rgb(RedBoard._check_positive(h),
                                       RedBoard._check_positive(s),
                                       RedBoard._check_positive(v))
-        self.pi.set_PWM_dutycycle(LED_R_PIN, RedBoard._check_positive(r) * PWM_RANGE)
-        self.pi.set_PWM_dutycycle(LED_G_PIN, RedBoard._check_positive(g) * PWM_RANGE)
-        self.pi.set_PWM_dutycycle(LED_B_PIN, RedBoard._check_positive(b) * PWM_RANGE)
+        self.pi.set_PWM_dutycycle(LED_R_PIN, RedBoard._check_positive(r) * self._pwm_range)
+        self.pi.set_PWM_dutycycle(LED_G_PIN, RedBoard._check_positive(g) * self._pwm_range)
+        self.pi.set_PWM_dutycycle(LED_B_PIN, RedBoard._check_positive(b) * self._pwm_range)
 
     @property
     def adc0(self):
@@ -311,12 +366,12 @@ class RedBoard:
             Measured voltage
         """
         if len(ADC_REGISTER_ADDRESSES) <= adc < 0:
-            raise RedBoardException('ADC number must be between 0 and {}'.format(len(ADC_REGISTER_ADDRESSES) - 1))
+            raise RedBoardException(f'ADC number must be between 0 and {len(ADC_REGISTER_ADDRESSES) - 1}')
         self.bus.write_i2c_block_data(ADC_I2C_ADDRESS, register=0x01, data=[ADC_REGISTER_ADDRESSES[adc], 0x83])
         data = self.bus.read_i2c_block_data(ADC_I2C_ADDRESS, register=0x00, length=2)
         return round(float(data[1] + (data[0] << 8)) / divisor, ndigits=digits)
 
-    def set_servo(self, servo_pin: int, position: float, pulse_min=None, pulse_max=None):
+    def set_servo(self, servo_pin: int, position: float):
         """
         Set a servo pulse width value
 
@@ -325,26 +380,21 @@ class RedBoard:
         :param position:
             Position from -1.0 to 1.0. Values outside this range will be clamped to it. Zero should correspond to the
             centre of the servo's range of motion.
-        :param pulse_min:
-            The minimum value to send to set_servo_pulsewidth, defaults to 500
-        :param pulse_max:
-            The maximum value to send to set_servo_pulsewidth, defaults to 2500
         :return:
             The actual (potentially clamped) value used to set the servo position
         :raises:
             RedBoardException if the specified pin isn't a servo output
         """
-        pulse_min = pulse_min or self.pulse_min
-        pulse_max = pulse_max or self.pulse_max
         RedBoard._check_servo_pin(servo_pin)
         position = RedBoard._check_range(position)
-
+        config = self._config['servos'][servo_pin]
+        pulse_min, pulse_max = config.pulse_min, config.pulse_max
+        LOGGER.debug(f'set servo{servo_pin}={position}, min={pulse_min}, max={pulse_max}')
+        config.value = position
         # Scale to a value pulse_min at -1, pulse_max at +1
         scale = float((pulse_max - pulse_min) / 2)
         centre = float((pulse_max + pulse_min) / 2)
         self.pi.set_servo_pulsewidth(servo_pin, int(centre - scale * position))
-
-        return position
 
     def disable_servo(self, servo_pin: int):
         """
@@ -356,7 +406,10 @@ class RedBoard:
             RedBoardException if the specified pin isn't a servo output
         """
         RedBoard._check_servo_pin(servo_pin)
+        config = self._config['servos'][servo_pin]
+        config.value = None
         self.pi.set_servo_pulsewidth(servo_pin, 0)
+        LOGGER.debug(f'servo {servo_pin} disabled')
 
     def set_motor_speed(self, motor, speed: float):
         """
@@ -369,9 +422,14 @@ class RedBoard:
             Speed between -1.0 and 1.0. If a value is supplied outside this range it will be clamped to this range
             silently.
         """
+        LOGGER.debug(f'set motor{motor}={speed}')
         speed = RedBoard._check_range(speed)
+        config = self._config['motors'][motor]
+        config.value = speed
+        if config.invert:
+            speed = -speed
         if not self.num_motors > motor >= 0:
-            raise RedBoardException('Motor number must be between 0 and {}'.format(self.num_motors - 1))
+            raise RedBoardException(f'Motor number must be between 0 and {self.num_motors - 1}')
         if motor < len(MOTORS):
             # Using the built-in motor drivers on the board
             self.pi.write(MOTORS[motor]['dir'], 1 if speed > 0 else 0)
@@ -400,4 +458,4 @@ class RedBoard:
         self.set_led(0, 0, 0)
         self.pi.stop()
         self._pi = None
-        LOGGER.info('RedBoard motors stopped')
+        LOGGER.info('RedBoard motors and servos stopped')

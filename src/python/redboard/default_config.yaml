@@ -1,0 +1,29 @@
+adc:
+  0: 1100
+  1: 7891
+  2: 7891
+  3: 7891
+servo:
+  5: { max: 2500, min: 500 }
+  6: { max: 2500, min: 500 }
+  7: { max: 2500, min: 500 }
+  8: { max: 2500, min: 500 }
+  9: { max: 2500, min: 500 }
+  10: { max: 2500, min: 500 }
+  11: { max: 2500, min: 500 }
+  13: { max: 2500, min: 500 }
+  20: { max: 2500, min: 500 }
+  21: { max: 2500, min: 500 }
+  22: { max: 2500, min: 500 }
+  27: { max: 2500, min: 500 }
+motor:
+  0: { invert: false }
+  1: { invert: false }
+  2: { invert: false }
+  3: { invert: false }
+  4: { invert: false }
+  5: { invert: false }
+  6: { invert: false }
+  7: { invert: false }
+  8: { invert: false }
+  9: { invert: false }

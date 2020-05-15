@@ -6,5 +6,5 @@ setup(
     description='Python library to drive the RedBoard+ motor controller',
     classifiers=['Programming Language :: Python :: 3.6'],
     packages=find_packages(),
-    install_requires=['smbus2','luma.oled','pigpio']
+    install_requires=['smbus2','luma.oled','pigpio','future-fstrings']
 )
