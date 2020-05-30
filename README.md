@@ -1,15 +1,35 @@
 # RedBoard Python Code
 
 This is a clean re-write of the Python code to drive the Red Robotics RedBoard 
-and its associated I2C connected display and motor expansion boards. Proper docs
-will appear in time, but for now:
+(get one from https://www.tindie.com/products/redrobotics/redboard/) and its 
+associated I2C connected display and motor expansion boards. Proper docs will 
+appear in time, but for now:
 
 ## Installing the library
 
-This will be pushed to PyPi at some point, but for now you can clone the repository,
-I'm using a Python 3.7 virtual environment here and I recommend you do the same (any
-modern Python 3 version should work, but please do use a virtual environment, and
-resist the urge to use the `sudo` command for anything except where strictly needed!)
+I strongly recommend using a virtual environment, and never installing with `sudo` - this board and software
+doesn't need it and it'll just trip you up later!
+
+### Install pre-requisite system packages
+
+From a clean headless raspbian installation you'll need the following additional packages installed,
+use this command to get them all in one go:
+
+```bash
+> sudo apt install libtiff5 libopenjp2-7-dev fonts-dejavu libpython3-dev libjpeg-dev pigpiod
+```
+
+### Get with pip
+
+Simplest option:
+
+```bash
+> pip3 install redboard
+```
+
+### Building from source
+
+If you want to fiddle with the library you can clone it from here and use it directly:
 
 ```bash
 > git clone https://github.com/ApproxEng/RedBoard.git
