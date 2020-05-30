@@ -76,6 +76,22 @@ print(r.adc0_divisor)
 r.adc0_divisor=1200
 ```
 
+## Set the onboard LED
+
+```python
+# Set by hue, saturation, value. Values of 0.1 are good for non-blinding!
+# Hue, Saturation and Value are all from 0.0 to 1.0, Hue of 0 is red, so
+# to create a colour wheel over ten seconds we can do this:
+from time import sleep
+for h in range(0,100):
+    r.set_led(h/100, 1, 0.1)
+    sleep(0.1)
+# If you want white, that's just any colour with saturation set to 0:
+r.set_led(0, 0, 0.1)
+# If you don't like your eyes, just set value to 1 and look closely at the LED
+# (please don't do this!)
+```
+
 ## Using MX2 motor expansion boards without the RedBoard
 
 ```python
