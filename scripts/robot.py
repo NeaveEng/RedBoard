@@ -52,7 +52,7 @@ def manual_control(joystick, display, board):
     the display and lighting up the LED.
     """
     lx, ly = joystick['lx', 'ly']
-    board.motor0, board.motor1 = mixer(yaw=lx, throttle=ly)
+    board.m0, board.m1 = mixer(yaw=lx, throttle=ly)
     display.text(line1='Simple Robot Script',
                  line2='x={:.2f}, y={:.2f}'.format(lx, ly),
                  line3='Press HOME to exit.')
