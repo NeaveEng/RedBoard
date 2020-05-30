@@ -14,7 +14,7 @@ from luma.oled.device import ssd1306
 # BCM Pin assignments
 MOTORS = [{'dir': 23, 'pwm': 18},
           {'dir': 24, 'pwm': 25}]
-SERVO_PINS = [5, 6, 7, 8, 9, 10, 11, 13, 20, 21, 22, 27]
+SERVO_PINS = [7, 8, 9, 10, 11, 5, 6, 13, 27, 20, 21, 22]
 LED_R_PIN = 26
 LED_G_PIN = 16
 LED_B_PIN = 19
@@ -26,7 +26,7 @@ PWM_FREQUENCY = 1000
 
 # Logger
 LOGGER = logging.getLogger(name='redboard')
-logging.basicConfig(level=logging.DEBUG)
+#logging.basicConfig(level=logging.DEBUG)
 
 # I2C address of the RedBoard's ADC
 ADC_I2C_ADDRESS = 0x48
@@ -102,7 +102,7 @@ class Display:
                 draw.text((0, 22), line3, font=self.font, fill='white')
 
 
-class RedBoardException(Exception):
+class RedBoardError(Exception):
     """
     This is raised when anything untoward happens that we can't fix. In particular, it'll be raised when attempting
     to create a RedBoard instance if either PiGPIO or SMBus can't be loaded, as these strongly suggest we're not
@@ -112,89 +112,102 @@ class RedBoardException(Exception):
     """
 
     def __init__(self, message):
-        super(RedBoardException, self).__init__(message)
+        super(RedBoardError, self).__init__(message)
         LOGGER.error(message)
 
 
-class MX2:
+def MX2(address=MX2_BOARD_CANDIDATE_I2C_ADDRESSES[0], i2c_bus_number=1, stop_motors=True):
     """
-    Stand-alone class to drive an MX2 expansion board. Normally you'd use these with the redboard, in which case
-    the motor values can be accessed through the main :class:`redboard.RedBoard` class's mX properties, i.e. for
-    the first board you'd have m2, m3, but it's also possible to use the MX2 boards without the main redboard, using
-    the Pi's I2C connection directly.
+    Function that defines a class, sets properties on it, and returns an instance. We do this because we can only
+    define class properties at runtime per-class and not per-instance, so to add properties the way we do and allow
+    for multiple instances we need to create a class per object instance rather than one that's shared. This function
+    is intentionally named to look like a class definition!
+
+    :param address:
+        Address of the MX2 board, defaults to 0x30 corresponding to a board with no jumpers bridged
+    :param i2c_bus_number:
+        Bus number, defaults to 1 for modern Pi boards, set to 0 for older ones or other values for software I2C
+    :param stop_motors:
+        Defaults to True, in which case it disables both motors when instantiated. If false, motors will not be
+        updated and the current speed will be None as we can't know it
+    :return:
+        An object which can be used to manipulate the MX2 board
     """
 
-    def __init__(self, address=MX2_BOARD_CANDIDATE_I2C_ADDRESSES[0], i2c_bus_number=1, stop_motors=True):
+    class MX2Super:
         """
-        Create a new MX2 object.
-
-        :param address:
-            I2C address, the MX2 boards have a pair of solder jumpers - these allocate an I2C address in the range 0x30
-            to 0x33, with no jumpers bridged corresponding to an address of 0x30 which is also the default value here.
-        :param i2c_bus_number:
-            I2C bus number. For most modern Pi boards the default of 1 will be correct. Older boards use 0, and you
-            may want to use software I2C in which case adjust as needed (you'll know if you need this)
-        :param stop_motors:
-            If set to True, this zeroes the motor speed of both motors attached to this MX2 board. Defaults to True.
-            If this is False then the speed of the motors is unchanged, and unknown, on startup, and the corresponding
-            properties will return None.
+        Stand-alone class to drive an MX2 expansion board. Normally you'd use these with the redboard, in which case
+        the motor values can be accessed through the main :class:`redboard.RedBoard` class's mX properties, i.e. for
+        the first board you'd have m2, m3, but it's also possible to use the MX2 boards without the main redboard, using
+        the Pi's I2C connection directly.
         """
-        self.address = address
-        self.i2c_bus_number = i2c_bus_number
-        try:
-            with smbus2.SMBus(bus=i2c_bus_number) as bus:
-                try:
-                    bus.read_byte_data(i2c_addr=address, register=0)
-                except OSError as oe:
-                    raise RedBoardException(f'no I2C device found at address {address}') from oe
-        except FileNotFoundError as cause:
-            raise RedBoardException('I2C not enabled, use raspi-config to enable and try again.') from cause
 
-        self._config = {'motors': {}}
-        for motor in range(0, 2):
-            m = RedBoard.Motor(motor=motor, invert=False, redboard=self)
-            self._config['motors'][motor] = m
-            for prefix in ['m', 'motor']:
-                setattr(self.__class__, f'{prefix}{motor}', property(fget=m.get_value, fset=m.set_value))
-                setattr(self.__class__, f'{prefix}{motor}_invert', property(fset=m.set_invert, fget=m.get_invert))
-        if stop_motors:
-            self.m0 = 0
-            self.m1 = 0
+        def __init__(self):
+            """
+            Create a new MX2 object.
+            """
+            self.address = address
+            self.i2c_bus_number = i2c_bus_number
+            try:
+                with smbus2.SMBus(bus=i2c_bus_number) as bus:
+                    try:
+                        bus.read_byte_data(i2c_addr=address, register=0)
+                    except OSError as oe:
+                        raise RedBoardError(f'no I2C device found at address {address}') from oe
+            except FileNotFoundError as cause:
+                raise RedBoardError('I2C not enabled, use raspi-config to enable and try again.') from cause
 
-    def set_motor_speed(self, motor, speed):
-        """
-        Set the motor speed
+            self._config = {'motors': {}}
+            for motor in range(0, 2):
+                m = RedBoard.Motor(motor=motor, invert=False, redboard=self)
+                self._config['motors'][motor] = m
+                for prefix in ['m', 'motor']:
+                    setattr(self.__class__, f'{prefix}{motor}', property(fget=m.get_value, fset=m.set_value))
+                    setattr(self.__class__, f'{prefix}{motor}_invert', property(fset=m.set_invert, fget=m.get_invert))
+            if stop_motors:
+                self.m0 = 0
+                self.m1 = 0
 
-        :param motor:
-            Either 0 or 1
-        :param speed:
-            A value between -1.0 and 1.0
-        """
-        if not 0 <= motor <= 1:
-            LOGGER.warning(f'MX2 boards only have m0, m1, attempt to set m{motor}')
-            return
-        speed = RedBoard.check_range(speed)
-        config = self._config['motors'][motor]
-        config.value = speed
-        if config.invert:
-            speed = -speed
-        with smbus2.SMBus(self.i2c_bus_number) as bus:
-            bus.write_i2c_block_data(i2c_addr=self.address,
-                                     register=0x30 if motor == 0 else 0x40,
-                                     data=[1 if speed >= 0 else 0, int(abs(speed) * 255)])
+        def set_motor_speed(self, motor, speed):
+            """
+            Set the motor speed
 
-    @property
-    def config(self):
-        return {'motors': {index: {'invert': m.invert} for index, m in self._config['motors'].items()}}
+            :param motor:
+                Either 0 or 1
+            :param speed:
+                A value between -1.0 and 1.0
+            """
+            if not 0 <= motor <= 1:
+                LOGGER.warning(f'MX2 boards only have m0, m1, attempt to set m{motor}')
+                return
+            speed = RedBoard.check_range(speed)
+            config = self._config['motors'][motor]
+            config.value = speed
+            if config.invert:
+                speed = -speed
+            with smbus2.SMBus(self.i2c_bus_number) as bus:
+                bus.write_i2c_block_data(i2c_addr=self.address,
+                                         register=0x30 if motor == 0 else 0x40,
+                                         data=[1 if speed >= 0 else 0, int(abs(speed) * 255)])
 
-    @config.setter
-    def config(self, d):
-        if 'motors' in d:
-            for index, invert in d['motors'].items():
-                if index in self._config['motors']:
-                    setattr(self, f'm{index}_invert', invert)
-                else:
-                    LOGGER.warning(f'config contained motor invert for invalid index {index}')
+        @property
+        def config(self):
+            return {'motors': {index: {'invert': m.invert} for index, m in self._config['motors'].items()}}
+
+        @config.setter
+        def config(self, d):
+            if 'motors' in d:
+                for index, invert in d['motors'].items():
+                    if index in self._config['motors']:
+                        setattr(self, f'm{index}_invert', invert)
+                    else:
+                        LOGGER.warning(f'config contained motor invert for invalid index {index}')
+
+        def stop(self):
+            for motor in range(0, 2):
+                self.set_motor_speed(motor, 0)
+
+    return MX2Super()
 
 
 class RedBoard:
@@ -329,9 +342,6 @@ class RedBoard:
             self.pi.set_mode(pwm_pin, pigpio.OUTPUT)
             self.pi.set_PWM_frequency(pwm_pin, self._pwm_frequency)
             self.pi.set_PWM_range(pwm_pin, self._pwm_range)
-            if stop_motors:
-                self.pi.write(dir_pin, 0)
-                self.pi.set_PWM_dutycycle(pwm_pin, 0)
             self._show_pwm_info(pwm_pin)
 
         self.i2c_bus_number = i2c_bus_number
@@ -355,7 +365,7 @@ class RedBoard:
                         LOGGER.debug(f'no MX2 boards found')
                     return addresses
             except FileNotFoundError as cause:
-                raise RedBoardException('I2C not enabled, use raspi-config to enable and try again.') from cause
+                raise RedBoardError('I2C not enabled, use raspi-config to enable and try again.') from cause
 
         # Check for I2C based expansions. This is an array of I2C addresses for motor expansion boards. Each
         # board provides a pair of motor controllers, these are assigned to motor numbers following the built-in
@@ -383,6 +393,9 @@ class RedBoard:
             self._config['adc'][adc] = a
             setattr(self.__class__, f'adc{adc}', property(fget=a.get_value))
             setattr(self.__class__, f'adc{adc}_divisor', property(fset=a.set_divisor, fget=a.get_divisor))
+
+        if stop_motors:
+            self.stop()
         LOGGER.info('redboard initialised')
 
     def _show_pwm_info(self, pwm):
@@ -468,7 +481,7 @@ class RedBoard:
             Servo pin to check
         """
         if servo_pin not in SERVO_PINS:
-            raise RedBoardException(f'{servo_pin} is not a valid pin for servo calls!')
+            raise RedBoardError(f'{servo_pin} is not a valid pin for servo calls!')
 
     def set_led(self, h, s, v):
         """
@@ -498,13 +511,13 @@ class RedBoard:
             Measured voltage
         """
         if len(ADC_REGISTER_ADDRESSES) <= adc < 0:
-            raise RedBoardException(f'ADC number must be between 0 and {len(ADC_REGISTER_ADDRESSES) - 1}')
+            raise RedBoardError(f'ADC number must be between 0 and {len(ADC_REGISTER_ADDRESSES) - 1}')
         try:
             with smbus2.SMBus(bus=self.i2c_bus_number) as bus:
                 bus.write_i2c_block_data(ADC_I2C_ADDRESS, register=0x01, data=[ADC_REGISTER_ADDRESSES[adc], 0x83])
                 data = bus.read_i2c_block_data(ADC_I2C_ADDRESS, register=0x00, length=2)
         except FileNotFoundError as cause:
-            raise RedBoardException('I2C not enabled, use raspi-config to enable and try again.') from cause
+            raise RedBoardError('I2C not enabled, use raspi-config to enable and try again.') from cause
 
         return round(float(data[1] + (data[0] << 8)) / divisor, ndigits=digits)
 
@@ -563,7 +576,7 @@ class RedBoard:
         speed = RedBoard.check_range(speed)
 
         if not self.num_motors > motor >= 0:
-            raise RedBoardException(f'Motor number must be between 0 and {self.num_motors - 1}')
+            raise RedBoardError(f'Motor number must be between 0 and {self.num_motors - 1}')
         config = self._config['motors'][motor]
         config.value = speed
         if config.invert:
@@ -583,7 +596,7 @@ class RedBoard:
                                              register=0x30 if i2c_motor_number == 0 else 0x40,
                                              data=[1 if speed >= 0 else 0, int(abs(speed) * 255)])
             except FileNotFoundError as cause:
-                raise RedBoardException('I2C not enabled, use raspi-config to enable and try again.') from cause
+                raise RedBoardError('I2C not enabled, use raspi-config to enable and try again.') from cause
 
     def stop(self):
         """
