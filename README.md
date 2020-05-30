@@ -138,3 +138,27 @@ Now create a display object and use it:
 d = redboard.Display()
 d.text(line1='Hello', line2='Python', line3='World')
 ```
+
+## Save and restore configuration
+
+The `RedBoard` object exposes its configuration as a `dict` containing the following:
+
+* Motor invert true / false per motor
+* ADC divisors per ADC
+* Servo pulse ranges per servo pin
+
+To get the current config as a python `dict`:
+
+```python
+r.config
+```
+
+To set the config from a `dict` you just do:
+
+```python
+r.config = new_config
+```
+
+Typically you'd save this out to a YAML file or similar and use it to
+load your configuration rather than having to put it into your code
+every time, but you could just set it directly.
