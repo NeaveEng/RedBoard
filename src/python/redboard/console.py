@@ -3,6 +3,7 @@
 # Giant pile of hacky code... Eugh. Works though ;)
 
 import curses
+import curses.textpad
 import logging
 from math import floor
 
@@ -20,7 +21,7 @@ def curses_main(screen):
     curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
     curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
     curses.init_pair(3, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-    curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+    curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_WHITE)
     curses.start_color()
 
     screen.keypad(True)
@@ -71,37 +72,42 @@ def curses_main(screen):
 
     try:
         while True:
+            config_line = None
             try:
                 screen.clear()
+
                 line = 0
                 screen.addstr(line, 0, 'RedBoard+ Console: Hardware by @NeilRedRobotics, Software by @Approx_Eng')
-                line += 2
+                line += 1
                 screen.addstr(line, 0,
                               'Letters to select control, numbers to set value, SPACE stops all, CTRL-C to exit')
                 line += 2
 
-                screen.addstr(line, 0, 'Motors:')
+                screen.addstr(line, 0, '——Motors' + '—' * 72, curses.color_pair(3))
                 line += 1
 
-                line = hr(line)
+                # line = hr(line)
                 for motor in range(0, r.num_motors):
                     row, col = divmod(motor, 4)
                     show_motor(line + row, col * 20, motor)
                 line += floor((r.num_motors - 1) / 4) + 1
-                line = hr(line)
+                # line = hr(line)
                 line += 1
 
-                screen.addstr(line, 0, 'Servos:')
+                screen.addstr(line, 0, '——Servos' + '—' * 72, curses.color_pair(3))
                 line += 1
-                line = hr(line)
+                # line = hr(line)
                 for index, servo in enumerate(redboard.SERVO_PINS):
                     row, col = divmod(index, 4)
                     show_servo(line + row, col * 20, servo)
                 line += floor((len(redboard.SERVO_PINS) - 1) / 4) + 1
 
-                line = hr(line)
+                # line = hr(line)
 
                 line += 1
+
+                config_line = line
+
                 screen.addstr(line, 0,
                               'Values - number key row or up / down arrows to set, BACKSPACE to stop / disable')
                 line += 1
@@ -113,20 +119,28 @@ def curses_main(screen):
                     else:
                         screen.addstr(line, 2, f'[{value_keys[i]}]={value:.1f}')
                     line += 1
+
+                if control is not None and control[:1] == 's':
+                    curses.textpad.rectangle(screen, config_line + 2, 40, config_line + 6, 79)
+                    screen.addstr(config_line + 3, 41, f'Configuration for {control}, \'=\' to edit:',
+                                  curses.color_pair(3))
+                    pulse_min, pulse_max = r.__getattribute__(f'{control}_config')
+                    screen.addstr(config_line + 4, 41, f'Min pulse width = {pulse_min} μs')
+                    screen.addstr(config_line + 5, 41, f'Max pulse width = {pulse_max} μs')
             except curses.error:
                 # Happens if the terminal isn't big enough, ignore it to give user the chance to make it larger
                 pass
             key = screen.getkey()
             if key in motor_keys and motor_keys.index(key) < r.num_motors:
                 control = f'm{motor_keys.index(key)}'
-            if key in servo_keys:
+            elif key in servo_keys:
                 control = f's{redboard.SERVO_PINS[servo_keys.index(key)]}'
-            if key in value_keys and control is not None:
+            elif key in value_keys and control is not None:
                 value = (-1) + value_keys.index(key) * 0.2
                 r.__setattr__(control, value)
-            if key is ' ':
+            elif key is ' ':
                 r.stop()
-            if key == 'KEY_UP' and control is not None:
+            elif key == 'KEY_UP' and control is not None:
                 current_value = r.__getattribute__(control)
                 if current_value is not None:
                     new_value = min(current_value + 0.2, 1.0)
@@ -134,7 +148,7 @@ def curses_main(screen):
                     r.__setattr__(control, new_value)
                 else:
                     r.__setattr__(control, 0)
-            if key == 'KEY_DOWN' and control is not None:
+            elif key == 'KEY_DOWN' and control is not None:
                 current_value = r.__getattribute__(control)
                 if current_value is not None:
                     new_value = max(current_value - 0.2, -1.0)
@@ -142,11 +156,11 @@ def curses_main(screen):
                     r.__setattr__(control, new_value)
                 else:
                     r.__setattr__(control, 0)
-            if key == 'KEY_BACKSPACE' and control is not None and control[:1] == 's':
+            elif key == 'KEY_BACKSPACE' and control is not None and control[:1] == 's':
                 r.__setattr__(control, None)
-            if key == 'KEY_BACKSPACE' and control is not None and control[:1] == 'm':
+            elif key == 'KEY_BACKSPACE' and control is not None and control[:1] == 'm':
                 r.__setattr__(control, 0)
-            if (key == 'KEY_LEFT' or key == 'KEY_RIGHT') and control is not None:
+            elif (key == 'KEY_LEFT' or key == 'KEY_RIGHT') and control is not None:
                 control_number = int(control[1:])
                 previous_control = None
                 next_control = None
@@ -165,7 +179,32 @@ def curses_main(screen):
                     next_control = f's{redboard.SERVO_PINS[min(servo_index + 1, len(redboard.SERVO_PINS) - 1)]}'
                 if previous_control is not None and next_control is not None:
                     control = previous_control if key == 'KEY_LEFT' else next_control
+            elif key == '=' and control is not None and control[:1] == 's' and config_line is not None:
+                screen.addstr(config_line + 3, 41, f'Enter new Pulse Min, then RETURN:   ',
+                              curses.color_pair(3))
+                pulse_min, pulse_max = r.__getattribute__(f'{control}_config')
+                screen.addstr(config_line + 4, 41, f'Min pulse width =                 ')
 
+                curses.echo()
+                curses.curs_set(2)
+                new_min = screen.getstr(config_line + 4, 59, 10)
+                screen.addstr(config_line + 3, 41, f'Enter new Pulse Max, then RETURN:',
+                              curses.color_pair(3))
+                screen.addstr(config_line + 5, 41, f'Max pulse width =                 ')
+                new_max = screen.getstr(config_line + 5, 59, 10)
+                parsed_new_min = None
+                parsed_new_max = None
+                try:
+                    parsed_new_min = int(new_min)
+                except ValueError:
+                    pass
+                try:
+                    parsed_new_max = int(new_max)
+                except ValueError:
+                    pass
+                r.__setattr__(f'{control}_config', (parsed_new_min, parsed_new_max))
+                curses.noecho()
+                curses.curs_set(0)
     except KeyboardInterrupt:
         r.stop()
 

@@ -247,6 +247,9 @@ class RedBoard:
                 raise ValueError(f'pulse_max must be None or int, was {new_pulse_max}')
             self.pulse_min = new_pulse_min or self.pulse_min
             self.pulse_max = new_pulse_max or self.pulse_max
+            # PiGPIO won't allow values <500 or >2500 for this, so we clamp them here
+            self.pulse_max = min(self.pulse_max, 2500)
+            self.pulse_min = max(self.pulse_min, 500)
             if self.value is not None:
                 # If we have an active value set then update based on the new
                 # configured pulse min / max values
@@ -542,6 +545,7 @@ class RedBoard:
         LOGGER.debug(f'set servo{servo_pin}={position}, min={pulse_min}, max={pulse_max}')
         config.value = position
         # Scale to a value pulse_min at -1, pulse_max at +1
+        position = -position
         scale = float((pulse_max - pulse_min) / 2)
         centre = float((pulse_max + pulse_min) / 2)
         self.pi.set_servo_pulsewidth(servo_pin, int(centre - scale * position))
