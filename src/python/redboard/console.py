@@ -8,206 +8,329 @@ import logging
 from math import floor
 
 import redboard
+from time import sleep
 
 logging.basicConfig(level=logging.ERROR)
 
 r = redboard.RedBoard()
 
+MOTOR_KEYS = ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']']
+SERVO_KEYS = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', "'", '#']
+VALUE_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-']
+ADC_KEYS = ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/']
+VALUE_ITEMS = list([round(i / ((len(VALUE_KEYS) - 1) / 2) - 1, 1) for i in range(0, len(VALUE_KEYS))])
+
 
 def curses_main(screen):
-    curses.noecho()
-    screen.clear()
-    curses.curs_set(False)
-    curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
-    curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
-    curses.init_pair(3, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-    curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_WHITE)
-    curses.start_color()
-
-    screen.keypad(True)
-
-    def red(s):
-        screen.addstr(s, curses.color_pair(1))
-
-    def green(s):
-        screen.addstr(s, curses.color_pair(2))
-
-    def yellow(s):
-        screen.addstr(s, curses.color_pair(3))
-
-    def magenta(s):
-        screen.addstr(s, curses.color_pair(4))
-
-    control = 'm0'
-    motor_keys = ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']']
-    servo_keys = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', "'", '#']
-    value_keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-']
-
-    def show_motor(row, col, motor):
-        try:
-            speed = r.__getattribute__(f'm{motor}')
-        except:
-            speed = None
-        speed_string = '??' if speed is None else f'{speed:.1f}'
-        rep = f'm{motor}[{motor_keys[motor]}] = {speed_string}'
-        if control is not None and control == f'm{motor}':
-            screen.addstr(row, col, rep, curses.color_pair(4))
-        else:
-            screen.addstr(row, col, rep)
-
-    def show_servo(row, col, servo):
-        value = r.__getattribute__(f's{servo}')
-        value_string = '--' if value is None else f'{value:.1f}'
-        rep = f's{servo:02}[{servo_keys[redboard.SERVO_PINS.index(servo)]}] = {value_string}'
-        if control is not None and control == f's{servo}':
-            screen.addstr(row, col, rep, curses.color_pair(4))
-        else:
-            screen.addstr(row, col, rep)
-
-    def hr(line):
-        screen.addstr(line, 0, '—' * 80, curses.color_pair(3))
-        return line + 1
-
-    key = ''
-
     try:
+        display = DisplayState(screen=screen, motors=range(0, r.num_motors), servo_pins=redboard.SERVO_PINS,
+                               adcs=range(0, 4), board=r)
+        curses.cbreak()
+        curses.halfdelay(1)
         while True:
-            config_line = None
-            try:
-                screen.clear()
+            display.start()
 
-                line = 0
-                screen.addstr(line, 0, 'RedBoard+ Console: Hardware by @NeilRedRobotics, Software by @Approx_Eng')
-                line += 1
-                screen.addstr(line, 0,
-                              'Letters to select control, numbers to set value, SPACE stops all, CTRL-C to exit')
-                line += 2
+            # Draw title
+            display.println('RedBoard+ Console: Hardware by @NeilRedRobotics, Software by @Approx_Eng')
+            display.println('Letters to select control, numbers to set value, SPACE stops all, CTRL-C to exit')
+            display.newline()
 
-                screen.addstr(line, 0, '——Motors' + '—' * 72, curses.color_pair(3))
-                line += 1
-
-                # line = hr(line)
-                for motor in range(0, r.num_motors):
-                    row, col = divmod(motor, 4)
-                    show_motor(line + row, col * 20, motor)
-                line += floor((r.num_motors - 1) / 4) + 1
-                # line = hr(line)
-                line += 1
-
-                screen.addstr(line, 0, '——Servos' + '—' * 72, curses.color_pair(3))
-                line += 1
-                # line = hr(line)
-                for index, servo in enumerate(redboard.SERVO_PINS):
+            # Motors, if present
+            if display.motors:
+                display.print_header('Motors')
+                for index, motor in enumerate(display.motors):
                     row, col = divmod(index, 4)
-                    show_servo(line + row, col * 20, servo)
-                line += floor((len(redboard.SERVO_PINS) - 1) / 4) + 1
+                    display.show_motor(display.line + row, col * 20, motor)
+                display.line += floor((len(display.motors) - 1) / 4) + 1
+                display.newline()
 
-                # line = hr(line)
+            # Servos, if present
+            if display.servo_pins:
+                display.print_header('Servos')
+                for index, servo in enumerate(display.servo_pins):
+                    row, col = divmod(index, 4)
+                    display.show_servo(display.line + row, col * 20, servo)
+                display.line += floor((len(display.servo_pins) - 1) / 4) + 1
+                display.newline()
 
-                line += 1
+            # ADC channels, if present
+            if display.adcs:
+                display.print_header('ADC Channels')
+                for index, adc in enumerate(display.adcs):
+                    row, col = divmod(index, 4)
+                    display.show_adc(display.line + row, col * 20, adc)
+                display.line += floor((len(display.adcs) - 1) / 4) + 1
+                display.newline()
 
-                config_line = line
+            # Show values if either motor or servo, doesn't make any sense for e.g. ADCs
+            if display.control_is_servo or display.control_is_motor:
+                display.println('Values - number key row or up / down arrows to set, BACKSPACE to stop / disable')
+                for value in VALUE_ITEMS:
+                    index = VALUE_ITEMS.index(value)
+                    display.show_value(display.line + len(VALUE_ITEMS) - index - 1, 2, value)
 
-                screen.addstr(line, 0,
-                              'Values - number key row or up / down arrows to set, BACKSPACE to stop / disable')
-                line += 1
-                for i in range(len(value_keys) - 1, -1, -1):
-                    current_value = r.__getattribute__(control)
-                    value = ((-1) + i * 0.2)
-                    if current_value is not None and f'{current_value:.1f}' == f'{value:.1f}':
-                        screen.addstr(line, 2, f'[{value_keys[i]}]={value:.1f}', curses.color_pair(4))
-                    else:
-                        screen.addstr(line, 2, f'[{value_keys[i]}]={value:.1f}')
-                    line += 1
+            # Show editor if the selected control has one
+            if display.control_is_servo:
+                editor = ServoConfigEditor(display=display, row=display.line + 1, column=40, height=4)
+                editor.render()
+            elif display.control_is_motor:
+                editor = MotorConfigEditor(display=display, row=display.line + 1, column=40, height=3)
+                editor.render()
+            else:
+                editor = None
 
-                if control is not None and control[:1] == 's':
-                    curses.textpad.rectangle(screen, config_line + 2, 40, config_line + 6, 79)
-                    screen.addstr(config_line + 3, 41, f'Configuration for {control}, \'=\' to edit:',
-                                  curses.color_pair(3))
-                    pulse_min, pulse_max = r.__getattribute__(f'{control}_config')
-                    screen.addstr(config_line + 4, 41, f'Min pulse width = {pulse_min} μs')
-                    screen.addstr(config_line + 5, 41, f'Max pulse width = {pulse_max} μs')
+            # Wait for a keypress and respond to it
+            try:
+                key = screen.getkey()
+                if key in MOTOR_KEYS and MOTOR_KEYS.index(key) < r.num_motors:
+                    display.control = f'm{display.motors[MOTOR_KEYS.index(key)]}'
+                elif key in SERVO_KEYS and SERVO_KEYS.index(key) < len(display.servo_pins):
+                    display.control = f's{display.servo_pins[SERVO_KEYS.index(key)]}'
+                elif key in ADC_KEYS and ADC_KEYS.index(key) < len(display.adcs):
+                    display.control = f'adc{display.adcs[ADC_KEYS.index(key)]}'
+                elif key == ' ':
+                    r.stop()
+                elif key == 'KEY_LEFT':
+                    display.select_previous_control()
+                elif key == 'KEY_RIGHT':
+                    display.select_next_control()
+                elif key == '=' and editor is not None:
+                    editor.edit()
+                    curses.cbreak()
+                    curses.halfdelay(1)
+                elif key == 'KEY_BACKSPACE':
+                    if display.control_is_servo:
+                        display.value = None
+                    elif display.control_is_motor:
+                        display.value = 0
+                # Setting value is only meaningful if we've got a servo or motor selected
+                if display.control_is_servo or display.control_is_motor:
+                    if key in VALUE_KEYS:
+                        display.value = VALUE_ITEMS[VALUE_KEYS.index(key)]
+                    elif key == 'KEY_UP':
+                        display.value = round(min(display.value + 0.2, 1.0), 1) if display.value is not None else 0
+                    elif key == 'KEY_DOWN':
+                        display.value = round(max(display.value - 0.2, -1.0), 1) if display.value is not None else 0
             except curses.error:
-                # Happens if the terminal isn't big enough, ignore it to give user the chance to make it larger
+                # No input available, perfectly normal
                 pass
-            key = screen.getkey()
-            if key in motor_keys and motor_keys.index(key) < r.num_motors:
-                control = f'm{motor_keys.index(key)}'
-            elif key in servo_keys:
-                control = f's{redboard.SERVO_PINS[servo_keys.index(key)]}'
-            elif key in value_keys and control is not None:
-                value = (-1) + value_keys.index(key) * 0.2
-                r.__setattr__(control, value)
-            elif key is ' ':
-                r.stop()
-            elif key == 'KEY_UP' and control is not None:
-                current_value = r.__getattribute__(control)
-                if current_value is not None:
-                    new_value = min(current_value + 0.2, 1.0)
-                    new_value = float(f'{new_value:.1f}')
-                    r.__setattr__(control, new_value)
-                else:
-                    r.__setattr__(control, 0)
-            elif key == 'KEY_DOWN' and control is not None:
-                current_value = r.__getattribute__(control)
-                if current_value is not None:
-                    new_value = max(current_value - 0.2, -1.0)
-                    new_value = float(f'{new_value:.1f}')
-                    r.__setattr__(control, new_value)
-                else:
-                    r.__setattr__(control, 0)
-            elif key == 'KEY_BACKSPACE' and control is not None and control[:1] == 's':
-                r.__setattr__(control, None)
-            elif key == 'KEY_BACKSPACE' and control is not None and control[:1] == 'm':
-                r.__setattr__(control, 0)
-            elif (key == 'KEY_LEFT' or key == 'KEY_RIGHT') and control is not None:
-                control_number = int(control[1:])
-                previous_control = None
-                next_control = None
-                if control[:1] == 'm':
-                    previous_control = f'm{max(0, control_number - 1)}'
-                    if control_number == r.num_motors - 1:
-                        next_control = f's{redboard.SERVO_PINS[0]}'
-                    else:
-                        next_control = f'm{min(control_number + 1, r.num_motors - 1)}'
-                elif control[:1] == 's':
-                    servo_index = redboard.SERVO_PINS.index(control_number)
-                    if servo_index == 0:
-                        previous_control = f'm{r.num_motors - 1}'
-                    else:
-                        previous_control = f's{redboard.SERVO_PINS[max(0, servo_index - 1)]}'
-                    next_control = f's{redboard.SERVO_PINS[min(servo_index + 1, len(redboard.SERVO_PINS) - 1)]}'
-                if previous_control is not None and next_control is not None:
-                    control = previous_control if key == 'KEY_LEFT' else next_control
-            elif key == '=' and control is not None and control[:1] == 's' and config_line is not None:
-                screen.addstr(config_line + 3, 41, f'Enter new Pulse Min, then RETURN:   ',
-                              curses.color_pair(3))
-                pulse_min, pulse_max = r.__getattribute__(f'{control}_config')
-                screen.addstr(config_line + 4, 41, f'Min pulse width =                 ')
 
-                curses.echo()
-                curses.curs_set(2)
-                new_min = screen.getstr(config_line + 4, 59, 10)
-                screen.addstr(config_line + 3, 41, f'Enter new Pulse Max, then RETURN:',
-                              curses.color_pair(3))
-                screen.addstr(config_line + 5, 41, f'Max pulse width =                 ')
-                new_max = screen.getstr(config_line + 5, 59, 10)
-                parsed_new_min = None
-                parsed_new_max = None
-                try:
-                    parsed_new_min = int(new_min)
-                except ValueError:
-                    pass
-                try:
-                    parsed_new_max = int(new_max)
-                except ValueError:
-                    pass
-                r.__setattr__(f'{control}_config', (parsed_new_min, parsed_new_max))
-                curses.noecho()
-                curses.curs_set(0)
+
+
     except KeyboardInterrupt:
+        # Exit on CTRL-C, stopping the motors as we go
         r.stop()
 
 
+# Call the curses wrapper until we get a KeyboardInterrupt
 def main():
     curses.wrapper(curses_main)
+    print(r.config_yaml)
+
+
+class DisplayState:
+
+    def __init__(self, screen, motors, servo_pins, adcs, board):
+        self.screen = screen
+
+        self.line = 0
+        self.servo_pins = servo_pins
+        self.board = board
+        self.adcs = adcs
+        self.motors = motors
+        self.all_controls = list([f'm{motor}' for motor in self.motors]) + list(
+            [f's{servo}' for servo in self.servo_pins]) + list([f'adc{adc}' for adc in self.adcs])
+        self.control = self.all_controls[0]
+        # Disable echo to terminal
+        curses.noecho()
+        # Hide the cursor
+        curses.curs_set(0)
+        # Contrast colour for UI
+        curses.init_pair(1, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        # Highlight
+        curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_WHITE)
+        # Enable colour
+        curses.start_color()
+        # Clear the screen
+        screen.clear()
+        # Enable key events for special keys i.e. arrows, backspace
+        screen.keypad(True)
+
+    def start(self):
+        self.screen.clear()
+        self.line = 0
+
+    @property
+    def value(self):
+        return self.board.__getattribute__(self.control)
+
+    @value.setter
+    def value(self, value):
+        self.board.__setattr__(self.control, value)
+
+    def println(self, string, contrast=False):
+        try:
+            if contrast:
+                self.screen.addstr(self.line, 0, string, curses.color_pair(1))
+            else:
+                self.screen.addstr(self.line, 0, string)
+        except curses.error:
+            pass
+        self.line += 1
+
+    def select_next_control(self):
+        control_index = self.all_controls.index(self.control)
+        self.control = self.all_controls[(control_index + 1) % len(self.all_controls)]
+
+    def select_previous_control(self):
+        control_index = self.all_controls.index(self.control)
+        self.control = self.all_controls[(control_index - 1) % len(self.all_controls)]
+
+    def newline(self):
+        self.line += 1
+
+    def print_header(self, string):
+        s = '——' + string
+        s += '—' * (80 - len(s))
+        self.println(s, True)
+
+    def show_motor(self, row, col, motor):
+        try:
+            try:
+                speed = self.board.__getattribute__(f'm{motor}')
+            except AttributeError:
+                speed = None
+            speed_string = '??' if speed is None else f'{speed:.1f}'
+            rep = f'm{motor}[{MOTOR_KEYS[motor]}] = {speed_string}'
+            if self.control == f'm{motor}':
+                self.screen.addstr(row, col, rep, curses.color_pair(2))
+            else:
+                self.screen.addstr(row, col, rep)
+        except curses.error:
+            pass
+
+    @property
+    def control_is_servo(self):
+        return self.control[:1] == 's'
+
+    @property
+    def control_is_motor(self):
+        return self.control[:1] == 'm'
+
+    @property
+    def control_is_adc(self):
+        return self.control[:1] == 'a'
+
+    def show_servo(self, row, col, servo):
+        try:
+            try:
+                value = self.board.__getattribute__(f's{servo}')
+            except AttributeError:
+                value = None
+            value_string = '--' if value is None else f'{value:.1f}'
+            rep = f's{servo:02}[{SERVO_KEYS[self.servo_pins.index(servo)]}] = {value_string}'
+            if self.control == f's{servo}':
+                self.screen.addstr(row, col, rep, curses.color_pair(2))
+            else:
+                self.screen.addstr(row, col, rep)
+        except curses.error:
+            pass
+
+    def show_adc(self, row, col, adc):
+        try:
+            try:
+                value = self.board.__getattribute__(f'adc{adc}')
+            except AttributeError:
+                value = None
+            value_string = '--' if value is None else f'{value:.2f}'
+            rep = f'adc{adc:02}[{ADC_KEYS[self.adcs.index(adc)]}] = {value_string}v'
+            if self.control == f'adc{adc}':
+                self.screen.addstr(row, col, rep, curses.color_pair(2))
+            else:
+                self.screen.addstr(row, col, rep)
+        except curses.error:
+            pass
+
+    def show_value(self, row, col, value):
+        try:
+            current_value = self.value
+            string = f'[{VALUE_KEYS[VALUE_ITEMS.index(round(value, 1))]}]={round(value, 1)}'
+            if current_value is not None and round(current_value, 1) == round(value, 1):
+                self.screen.addstr(row, col, string, curses.color_pair(2))
+            else:
+                self.screen.addstr(row, col, string)
+        except curses.error:
+            pass
+
+
+class MotorConfigEditor:
+    def __init__(self, display, row, column, height):
+        self.display = display
+        self.row = row
+        self.column = column
+        self.height = height
+
+    def render(self):
+        try:
+            screen = self.display.screen
+            curses.textpad.rectangle(screen, self.row, self.column, self.row + self.height, 79)
+            screen.addstr(self.row + 1, self.column + 1, f'Motor {self.display.control}, \'=\' to toggle invert:',
+                          curses.color_pair(1))
+            invert = self.display.board.__getattribute__(f'{self.display.control}_invert')
+            screen.addstr(self.row + 2, self.column + 1, f'Invert direction = {invert}')
+        except curses.error:
+            pass
+
+    def edit(self):
+        invert = self.display.board.__getattribute__(f'{self.display.control}_invert')
+        self.display.board.__setattr__(f'{self.display.control}_invert', not invert)
+
+
+class ServoConfigEditor:
+    def __init__(self, display, row, column, height):
+        self.display = display
+        self.row = row
+        self.column = column
+        self.height = height
+
+    def render(self):
+        try:
+            screen = self.display.screen
+            curses.textpad.rectangle(screen, self.row, self.column, self.row + self.height, 79)
+            screen.addstr(self.row + 1, self.column + 1, f'Servo {self.display.control}, \'=\' to edit config:',
+                          curses.color_pair(1))
+            pulse_min, pulse_max = self.display.board.__getattribute__(f'{self.display.control}_config')
+            screen.addstr(self.row + 2, self.column + 1, f'Min pulse width = {pulse_min} μs')
+            screen.addstr(self.row + 3, self.column + 1, f'Max pulse width = {pulse_max} μs')
+        except curses.error:
+            pass
+
+    def edit(self):
+        try:
+            screen = self.display.screen
+            screen.addstr(self.row + 1, self.column + 1, f'Enter new Pulse Min, then RETURN:   ',
+                          curses.color_pair(1))
+            screen.addstr(self.row + 2, self.column + 1, f'Min pulse width =                 ')
+            curses.echo()
+            curses.curs_set(2)
+            new_min = screen.getstr(self.row + 2, self.column + 19, 10)
+            screen.addstr(self.row + 1, self.column + 1, f'Enter new Pulse Max, then RETURN:',
+                          curses.color_pair(1))
+            screen.addstr(self.row + 3, self.column + 1, f'Max pulse width =                 ')
+            new_max = screen.getstr(self.row + 3, self.column + 19, 10)
+            parsed_new_min = None
+            parsed_new_max = None
+            try:
+                parsed_new_min = int(new_min)
+            except ValueError:
+                pass
+            try:
+                parsed_new_max = int(new_max)
+            except ValueError:
+                pass
+            self.display.board.__setattr__(f'{self.display.control}_config', (parsed_new_min, parsed_new_max))
+            curses.noecho()
+            curses.curs_set(0)
+        except curses.error:
+            curses.noecho()
+            curses.curs_set(0)

@@ -10,6 +10,7 @@ from PIL import ImageFont
 from luma.core.interface.serial import i2c
 from luma.core.render import canvas
 from luma.oled.device import ssd1306
+import time
 
 # BCM Pin assignments
 MOTORS = [{'dir': 23, 'pwm': 18},
@@ -26,13 +27,13 @@ PWM_FREQUENCY = 1000
 
 # Logger
 LOGGER = logging.getLogger(name='redboard')
-#logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 
 # I2C address of the RedBoard's ADC
 ADC_I2C_ADDRESS = 0x48
 
 # Registers to read ADC data
-ADC_REGISTER_ADDRESSES = [0xC3, 0xE3, 0xF3, 0xD3]
+ADC_REGISTER_ADDRESSES = [0xC3, 0xD3, 0xE3, 0xF3]
 
 # Potential I2C addresses for MX2 boards
 MX2_BOARD_CANDIDATE_I2C_ADDRESSES = [0x30, 0x31, 0x32, 0x33]
@@ -279,6 +280,8 @@ class RedBoard:
             if value is None or not isinstance(value, bool):
                 raise ValueError(f'm{self.motor}_invert must be True|False, was {value}')
             self.invert = value
+            if self.value is not None:
+                self.redboard.set_motor_speed(motor=self.motor, speed=self.value)
 
         def get_invert(self, _):
             return self.invert
@@ -402,9 +405,13 @@ class RedBoard:
         LOGGER.info('redboard initialised')
 
     def _show_pwm_info(self, pwm):
+        try:
+            duty_cycle = self.pi.get_PWM_dutycycle(pwm)
+        except pigpio.error:
+            duty_cycle = 'not enabled'
         LOGGER.debug(f'motor pwm pin {pwm}, range={self.pi.get_PWM_range(pwm)}, '
                      f'frequency={self.pi.get_PWM_frequency(pwm)}, '
-                     f'duty_cycle={self.pi.get_PWM_dutycycle(pwm)}')
+                     f'duty_cycle={duty_cycle}')
 
     @property
     def config(self):
@@ -438,7 +445,7 @@ class RedBoard:
 
     @property
     def config_yaml(self):
-        return yaml.dump(self.config)
+        return yaml.dump(self.config, default_flow_style=True)
 
     @property
     def pi(self):
@@ -497,7 +504,7 @@ class RedBoard:
         self.pi.set_PWM_dutycycle(LED_G_PIN, RedBoard._check_positive(g) * self._pwm_range)
         self.pi.set_PWM_dutycycle(LED_B_PIN, RedBoard._check_positive(b) * self._pwm_range)
 
-    def read_adc(self, adc, divisor=7891.0, digits=2):
+    def read_adc(self, adc, divisor=7891.0, digits=2, sleep_time=0.01):
         """
         Read from the onboard ADC. Note that ADC 0 is the battery monitor and will need a specific divisor to report
         accurately, don't use this ADC with the default value for divisor unless you happen to have an exactly 3.3v
@@ -510,6 +517,11 @@ class RedBoard:
             reference
         :param digits:
             Number of digits to round the result, defaults to 2
+        :param sleep_time:
+            Time to sleep between setting the register from which to read and actually taking the reading. This is
+            needed to allow the converter to settle, the default of 1/100s works for all cases, it may be possible
+            to reduce it if needed for faster response, or consider putting this in a separate thread and / or memoizing
+            it
         :return:
             Measured voltage
         """
@@ -518,6 +530,10 @@ class RedBoard:
         try:
             with smbus2.SMBus(bus=self.i2c_bus_number) as bus:
                 bus.write_i2c_block_data(ADC_I2C_ADDRESS, register=0x01, data=[ADC_REGISTER_ADDRESSES[adc], 0x83])
+                # ADC channels seem to need some time to settle, the default of 0.01 works for cases where we
+                # are aggressively polling each channel in turn.
+                if sleep_time:
+                    time.sleep(sleep_time)
                 data = bus.read_i2c_block_data(ADC_I2C_ADDRESS, register=0x00, length=2)
         except FileNotFoundError as cause:
             raise RedBoardError('I2C not enabled, use raspi-config to enable and try again.') from cause
