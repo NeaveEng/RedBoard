@@ -76,6 +76,9 @@ def curses_main(screen):
             elif display.control_is_motor:
                 editor = MotorConfigEditor(display=display, row=display.line + 1, column=40, height=3)
                 editor.render()
+            elif display.control_is_adc:
+                editor = ADCConfigEditor(display=display, row=display.line, column=40, height=3)
+                editor.render()
             else:
                 editor = None
 
@@ -243,7 +246,7 @@ class DisplayState:
             except AttributeError:
                 value = None
             value_string = '--' if value is None else f'{value:.2f}'
-            rep = f'adc{adc:02}[{ADC_KEYS[self.adcs.index(adc)]}] = {value_string}v'
+            rep = f'adc{adc:01}[{ADC_KEYS[self.adcs.index(adc)]}] = {value_string}v'
             if self.control == f'adc{adc}':
                 self.screen.addstr(row, col, rep, curses.color_pair(2))
             else:
@@ -284,6 +287,51 @@ class MotorConfigEditor:
     def edit(self):
         invert = self.display.board.__getattribute__(f'{self.display.control}_invert')
         self.display.board.__setattr__(f'{self.display.control}_invert', not invert)
+
+
+class ADCConfigEditor:
+    def __init__(self, display, row, column, height):
+        self.display = display
+        self.row = row
+        self.column = column
+        self.height = height
+
+    def render(self):
+        try:
+            screen = self.display.screen
+            curses.textpad.rectangle(screen, self.row, self.column, self.row + self.height, 79)
+            screen.addstr(self.row + 1, self.column + 1, f'ADC {self.display.control}, \'=\' to calibrate:',
+                          curses.color_pair(1))
+            divisor = self.display.board.__getattribute__(f'{self.display.control}_divisor')
+            screen.addstr(self.row + 2, self.column + 1, f'Current divisor = {divisor:.1f}')
+        except curses.error:
+            pass
+
+    def edit(self):
+        try:
+            screen = self.display.screen
+            screen.addstr(self.row + 1, self.column + 1, f'Enter observed voltage, then RETURN:  ',
+                          curses.color_pair(1))
+            screen.addstr(self.row + 2, self.column + 1, f'Measured voltage =                    ')
+            curses.echo()
+            curses.curs_set(2)
+            measured_voltage = screen.getstr(self.row + 2, self.column + 20, 10)
+
+            parsed_measured_voltage = None
+            try:
+                parsed_measured_voltage = float(measured_voltage)
+            except ValueError:
+                pass
+            if parsed_measured_voltage:
+                current_voltage = self.display.value
+                current_divisor = self.display.board.__getattribute__(f'{self.display.control}_divisor')
+                new_divisor = current_divisor * (current_voltage / parsed_measured_voltage)
+                self.display.board.__setattr__(f'{self.display.control}_divisor', new_divisor)
+            curses.noecho()
+            curses.curs_set(0)
+        except curses.error:
+            curses.noecho()
+            curses.curs_set(0)
 
 
 class ServoConfigEditor:

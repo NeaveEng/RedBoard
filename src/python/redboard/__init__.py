@@ -445,7 +445,7 @@ class RedBoard:
 
     @property
     def config_yaml(self):
-        return yaml.dump(self.config, default_flow_style=True)
+        return yaml.dump(self.config)
 
     @property
     def pi(self):
