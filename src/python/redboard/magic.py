@@ -40,7 +40,7 @@ def add_properties(board, motors=None, servos=None, adcs=None):
     if callable(getattr(board, '_set_servo_pulsewidth', None)) and servos:
         superclasses += [SetServoMixin]
     if callable(getattr(board, '_read_adc', None)) and adcs:
-        superclasses += [ReadACDMixin]
+        superclasses += [ReadADCMixin]
 
     class Board(*superclasses):
 
@@ -267,7 +267,7 @@ class SetServoMixin:
             self._set_servo_pulsewidth(servo, 0, **kwargs)
 
 
-class ReadACDMixin:
+class ReadADCMixin:
 
     def read_adc(self, adc, **kwargs):
         if ADCS in self._config:

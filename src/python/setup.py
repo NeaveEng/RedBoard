@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='redboard',
-    version='0.1.1',
+    version='0.1.2',
     author='Tom Oinn',
     author_email='tomoinn@gmail.com',
     url='https://github.com/ApproxEng/RedBoard',
