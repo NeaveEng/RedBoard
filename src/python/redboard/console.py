@@ -11,7 +11,7 @@ import redboard
 
 logging.basicConfig(level=logging.ERROR)
 
-r = redboard.MX2()
+r = redboard.RedBoard()
 
 MOTOR_KEYS = ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']']
 SERVO_KEYS = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', "'", '#']
