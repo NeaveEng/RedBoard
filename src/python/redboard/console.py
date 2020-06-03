@@ -8,11 +8,10 @@ import logging
 from math import floor
 
 import redboard
-from time import sleep
 
 logging.basicConfig(level=logging.ERROR)
 
-r = redboard.RedBoard()
+r = redboard.MX2()
 
 MOTOR_KEYS = ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']']
 SERVO_KEYS = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', "'", '#']
@@ -23,8 +22,7 @@ VALUE_ITEMS = list([round(i / ((len(VALUE_KEYS) - 1) / 2) - 1, 1) for i in range
 
 def curses_main(screen):
     try:
-        display = DisplayState(screen=screen, motors=range(0, r.num_motors), servo_pins=redboard.SERVO_PINS,
-                               adcs=range(0, 4), board=r)
+        display = DisplayState(screen=screen, board=r)
         curses.cbreak()
         curses.halfdelay(1)
         while True:
@@ -133,14 +131,14 @@ def main():
 
 class DisplayState:
 
-    def __init__(self, screen, motors, servo_pins, adcs, board):
+    def __init__(self, screen, board):
         self.screen = screen
 
         self.line = 0
-        self.servo_pins = servo_pins
+        self.servo_pins = board.servos
         self.board = board
-        self.adcs = adcs
-        self.motors = motors
+        self.adcs = board.adcs
+        self.motors = board.motors
         self.all_controls = list([f'm{motor}' for motor in self.motors]) + list(
             [f's{servo}' for servo in self.servo_pins]) + list([f'adc{adc}' for adc in self.adcs])
         self.control = self.all_controls[0]
