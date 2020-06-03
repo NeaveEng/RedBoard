@@ -193,12 +193,11 @@ class RedBoard:
         """
 
         self._pi = None
-        self._pwm_frequency = pwm_frequency
         self._pwm_range = pwm_range
 
         # Configure PWM for the LED outputs
         for led_pin in [RedBoard.LED_R_PIN, RedBoard.LED_G_PIN, RedBoard.LED_B_PIN]:
-            self.pi.set_PWM_frequency(led_pin, self._pwm_frequency)
+            self.pi.set_PWM_frequency(led_pin, pwm_frequency)
             self.pi.set_PWM_range(led_pin, self._pwm_range)
 
         # Configure motor pulse and direction pins as outputs, set PWM frequency
@@ -207,9 +206,10 @@ class RedBoard:
             dir_pin = motor['dir']
             self.pi.set_mode(dir_pin, pigpio.OUTPUT)
             self.pi.set_mode(pwm_pin, pigpio.OUTPUT)
-            self.pi.set_PWM_frequency(pwm_pin, self._pwm_frequency)
+            self.pi.set_PWM_frequency(pwm_pin, pwm_frequency)
             self.pi.set_PWM_range(pwm_pin, self._pwm_range)
 
+        # Set bus number to use for ADC and MX2 boards
         self.i2c_bus_number = i2c_bus_number
 
         # Check for I2C based expansions. This is an array of I2C addresses for motor expansion boards. Each
@@ -225,13 +225,14 @@ class RedBoard:
         self.num_motors = len(RedBoard.MOTORS) + (len(self.i2c_motor_expansions) * 2)
 
         # Inject property based accessors, along with configuration infrastructure
-        add_properties(board=self, motors=range(0, self.num_motors), servos=RedBoard.SERVO_PINS, adcs=range(0, 4))
-
+        add_properties(board=self, motors=range(0, self.num_motors), servos=RedBoard.SERVO_PINS, adcs=[0, 1, 2, 3],
+                       default_adc_divisor=7891)
+        # Set adc0 divisor, this uses a different config as it's attached to the battery
         self.adc0_divisor = 1100
-        self.adc1_divisor = 7891
-        self.adc2_divisor = 7891
-        self.adc3_divisor = 7891
+        # Set up LED properties
+        self._led = LED()
 
+        # Stop the motors if requested
         if stop_motors:
             self.stop()
         LOGGER.info('redboard initialised')
@@ -257,13 +258,44 @@ class RedBoard:
             return 1.0
         return f
 
+    @property
+    def led(self):
+        """
+        Raw HSV, before any brightness adjustment
+        """
+        return self._led.raw_hsv
+
+    @led.setter
+    def led(self, l):
+        """
+        Set either by tuple of h, s, v floats, or by colour name
+        """
+        self.set_led(*self._led.set_colour(l))
+
+    @property
+    def led_brightness(self):
+        """
+        LED brightness, used to scale the value part of the HSV triple.
+        """
+        return self._led.brightness
+
+    @led_brightness.setter
+    def led_brightness(self, brightness):
+        """
+        Set LED brightness and update the LED chip, floating point value 0-1.0
+        """
+        self.set_led(*self._led.set_brightness(brightness))
+
     def set_led(self, h, s, v):
         """
-        Set the on-board LED to the given hue, saturation, value (0.0-1.0)
+        Set the on-board LED to the given hue, saturation, value (0.0-1.0). Best to set this using the properties, as
+        you get brightness scaling included that way. I.e. board.led='red', or board.led=0,0.8,1.0, set brightness with
+        board.led_brightness=0.5 or similar. Colours render best at brightness of around 0.4-0.6.
         """
-        r, g, b = colorsys.hsv_to_rgb(RedBoard._check_positive(h),
-                                      RedBoard._check_positive(s),
-                                      RedBoard._check_positive(v))
+        self._led.set_colour((h, s, v))
+        r, g, b = colorsys.hsv_to_rgb(_check_positive(h),
+                                      _check_positive(s),
+                                      _check_positive(v))
         self.pi.set_PWM_dutycycle(RedBoard.LED_R_PIN, RedBoard._check_positive(r) * self._pwm_range)
         self.pi.set_PWM_dutycycle(RedBoard.LED_G_PIN, RedBoard._check_positive(g) * self._pwm_range)
         self.pi.set_PWM_dutycycle(RedBoard.LED_B_PIN, RedBoard._check_positive(b) * self._pwm_range)
@@ -290,11 +322,19 @@ class RedBoard:
                 if sleep_time:
                     time.sleep(sleep_time)
                 data = bus.read_i2c_block_data(RedBoard.ADC_I2C_ADDRESS, register=0x00, length=2)
+                return data[1] + (data[0] << 8)
         except FileNotFoundError as cause:
             raise RedBoardError('I2C not enabled, use raspi-config to enable and try again.') from cause
-        return data[1] + (data[0] << 8)
 
     def _set_servo_pulsewidth(self, servo_pin: int, pulse_width: int):
+        """
+        Set a servo pulse width
+
+        :param servo_pin:
+            Servo pin to set
+        :param pulse_width:
+            Pulse width in microseconds
+        """
         self.pi.set_servo_pulsewidth(servo_pin, pulse_width)
 
     def _set_motor_speed(self, motor, speed: float):
@@ -305,10 +345,8 @@ class RedBoard:
             The motor to set, 0 sets speed on motor A, 1 on motor B. If any I2C expansions are defined this will also
             accept higher number motors, where pairs of motors are allocated to each expansion address in turn.
         :param speed:
-            Speed between -1.0 and 1.0. If a value is supplied outside this range it will be clamped to this range
-            silently.
+            Speed between -1.0 and 1.0.
         """
-        LOGGER.debug(f'set motor{motor}={speed}')
         if motor < len(RedBoard.MOTORS):
             # Using the built-in motor drivers on the board
             self.pi.write(RedBoard.MOTORS[motor]['dir'], 1 if speed > 0 else 0)
@@ -337,3 +375,156 @@ class RedBoard:
         self.pi.stop()
         self._pi = None
         LOGGER.info('RedBoard motors and servos stopped')
+
+
+class LED:
+    """
+    Helper class because we don't really want to be spraying colour names all over the rest of the board code
+    """
+
+    # HSV triples for each of the standard colour names, can be used when setting the led property
+    CSS4_COLOURS = {'aliceblue': (0.578, 0.059, 1.0), 'antiquewhite': (0.095, 0.14, 0.98), 'aqua': (0.5, 1.0, 1.0),
+                    'aquamarine': (0.444, 0.502, 1.0), 'azure': (0.5, 0.059, 1.0), 'beige': (0.167, 0.102, 0.961),
+                    'bisque': (0.09, 0.231, 1.0), 'black': (0.0, 0.0, 0.0), 'blanchedalmond': (0.1, 0.196, 1.0),
+                    'blue': (0.667, 1.0, 1.0), 'blueviolet': (0.753, 0.81, 0.886), 'brown': (0.0, 0.745, 0.647),
+                    'burlywood': (0.094, 0.392, 0.871), 'cadetblue': (0.505, 0.406, 0.627),
+                    'chartreuse': (0.25, 1.0, 1.0),
+                    'chocolate': (0.069, 0.857, 0.824), 'coral': (0.045, 0.686, 1.0),
+                    'cornflowerblue': (0.607, 0.578, 0.929), 'cornsilk': (0.133, 0.137, 1.0),
+                    'crimson': (0.967, 0.909, 0.863), 'cyan': (0.5, 1.0, 1.0), 'darkblue': (0.667, 1.0, 0.545),
+                    'darkcyan': (0.5, 1.0, 0.545), 'darkgoldenrod': (0.118, 0.94, 0.722), 'darkgray': (0.0, 0.0, 0.663),
+                    'darkgreen': (0.333, 1.0, 0.392), 'darkgrey': (0.0, 0.0, 0.663), 'darkkhaki': (0.154, 0.434, 0.741),
+                    'darkmagenta': (0.833, 1.0, 0.545), 'darkolivegreen': (0.228, 0.561, 0.42),
+                    'darkorange': (0.092, 1.0, 1.0), 'darkorchid': (0.778, 0.755, 0.8), 'darkred': (0.0, 1.0, 0.545),
+                    'darksalmon': (0.042, 0.476, 0.914), 'darkseagreen': (0.333, 0.239, 0.737),
+                    'darkslateblue': (0.69, 0.561, 0.545), 'darkslategray': (0.5, 0.405, 0.31),
+                    'darkslategrey': (0.5, 0.405, 0.31), 'darkturquoise': (0.502, 1.0, 0.82),
+                    'darkviolet': (0.784, 1.0, 0.827), 'deeppink': (0.91, 0.922, 1.0), 'deepskyblue': (0.542, 1.0, 1.0),
+                    'dimgray': (0.0, 0.0, 0.412), 'dimgrey': (0.0, 0.0, 0.412), 'dodgerblue': (0.582, 0.882, 1.0),
+                    'firebrick': (0.0, 0.809, 0.698), 'floralwhite': (0.111, 0.059, 1.0),
+                    'forestgreen': (0.333, 0.755, 0.545), 'fuchsia': (0.833, 1.0, 1.0), 'gainsboro': (0.0, 0.0, 0.863),
+                    'ghostwhite': (0.667, 0.027, 1.0), 'gold': (0.141, 1.0, 1.0), 'goldenrod': (0.119, 0.853, 0.855),
+                    'gray': (0.0, 0.0, 0.502), 'green': (0.333, 1.0, 0.502), 'greenyellow': (0.232, 0.816, 1.0),
+                    'grey': (0.0, 0.0, 0.502), 'honeydew': (0.333, 0.059, 1.0), 'hotpink': (0.917, 0.588, 1.0),
+                    'indianred': (0.0, 0.551, 0.804), 'indigo': (0.763, 1.0, 0.51), 'ivory': (0.167, 0.059, 1.0),
+                    'khaki': (0.15, 0.417, 0.941), 'lavender': (0.667, 0.08, 0.98),
+                    'lavenderblush': (0.944, 0.059, 1.0),
+                    'lawngreen': (0.251, 1.0, 0.988), 'lemonchiffon': (0.15, 0.196, 1.0),
+                    'lightblue': (0.541, 0.248, 0.902), 'lightcoral': (0.0, 0.467, 0.941),
+                    'lightcyan': (0.5, 0.122, 1.0),
+                    'lightgoldenrodyellow': (0.167, 0.16, 0.98), 'lightgray': (0.0, 0.0, 0.827),
+                    'lightgreen': (0.333, 0.395, 0.933), 'lightgrey': (0.0, 0.0, 0.827),
+                    'lightpink': (0.975, 0.286, 1.0),
+                    'lightsalmon': (0.048, 0.522, 1.0), 'lightseagreen': (0.491, 0.82, 0.698),
+                    'lightskyblue': (0.564, 0.46, 0.98), 'lightslategray': (0.583, 0.222, 0.6),
+                    'lightslategrey': (0.583, 0.222, 0.6), 'lightsteelblue': (0.594, 0.207, 0.871),
+                    'lightyellow': (0.167, 0.122, 1.0), 'lime': (0.333, 1.0, 1.0), 'limegreen': (0.333, 0.756, 0.804),
+                    'linen': (0.083, 0.08, 0.98), 'magenta': (0.833, 1.0, 1.0), 'maroon': (0.0, 1.0, 0.502),
+                    'mediumaquamarine': (0.443, 0.502, 0.804), 'mediumblue': (0.667, 1.0, 0.804),
+                    'mediumorchid': (0.8, 0.597, 0.827), 'mediumpurple': (0.721, 0.489, 0.859),
+                    'mediumseagreen': (0.408, 0.665, 0.702), 'mediumslateblue': (0.69, 0.563, 0.933),
+                    'mediumspringgreen': (0.436, 1.0, 0.98), 'mediumturquoise': (0.494, 0.656, 0.82),
+                    'mediumvioletred': (0.895, 0.894, 0.78), 'midnightblue': (0.667, 0.777, 0.439),
+                    'mintcream': (0.417, 0.039, 1.0), 'mistyrose': (0.017, 0.118, 1.0), 'moccasin': (0.106, 0.29, 1.0),
+                    'navajowhite': (0.1, 0.322, 1.0), 'navy': (0.667, 1.0, 0.502), 'oldlace': (0.109, 0.091, 0.992),
+                    'olive': (0.167, 1.0, 0.502), 'olivedrab': (0.221, 0.754, 0.557), 'orange': (0.108, 1.0, 1.0),
+                    'orangered': (0.045, 1.0, 1.0), 'orchid': (0.84, 0.486, 0.855),
+                    'palegoldenrod': (0.152, 0.286, 0.933),
+                    'palegreen': (0.333, 0.394, 0.984), 'paleturquoise': (0.5, 0.265, 0.933),
+                    'palevioletred': (0.945, 0.489, 0.859), 'papayawhip': (0.103, 0.165, 1.0),
+                    'peachpuff': (0.079, 0.275, 1.0), 'peru': (0.082, 0.693, 0.804), 'pink': (0.971, 0.247, 1.0),
+                    'plum': (0.833, 0.276, 0.867), 'powderblue': (0.519, 0.235, 0.902), 'purple': (0.833, 1.0, 0.502),
+                    'rebeccapurple': (0.75, 0.667, 0.6), 'red': (0.0, 1.0, 1.0), 'rosybrown': (0.0, 0.239, 0.737),
+                    'royalblue': (0.625, 0.711, 0.882), 'saddlebrown': (0.069, 0.863, 0.545),
+                    'salmon': (0.017, 0.544, 0.98), 'sandybrown': (0.077, 0.607, 0.957),
+                    'seagreen': (0.407, 0.669, 0.545),
+                    'seashell': (0.069, 0.067, 1.0), 'sienna': (0.054, 0.719, 0.627), 'silver': (0.0, 0.0, 0.753),
+                    'skyblue': (0.548, 0.426, 0.922), 'slateblue': (0.69, 0.561, 0.804),
+                    'slategray': (0.583, 0.222, 0.565),
+                    'slategrey': (0.583, 0.222, 0.565), 'snow': (0.0, 0.02, 1.0), 'springgreen': (0.416, 1.0, 1.0),
+                    'steelblue': (0.576, 0.611, 0.706), 'tan': (0.095, 0.333, 0.824), 'teal': (0.5, 1.0, 0.502),
+                    'thistle': (0.833, 0.116, 0.847), 'tomato': (0.025, 0.722, 1.0), 'turquoise': (0.483, 0.714, 0.878),
+                    'violet': (0.833, 0.454, 0.933), 'wheat': (0.109, 0.269, 0.961), 'white': (0.0, 0.0, 1.0),
+                    'whitesmoke': (0.0, 0.0, 0.961), 'yellow': (0.167, 1.0, 1.0), 'yellowgreen': (0.222, 0.756, 0.804)}
+
+    def __init__(self):
+        self._brightness = 1.0
+        self._hsv = (0, 0, 0)
+
+    @property
+    def hsv(self):
+        """
+        Calculated HSV triple taking brightness into account
+        """
+        h, s, v = self._hsv
+        v = v * self._brightness
+        return h, s, v
+
+    @property
+    def brightness(self):
+        """
+        Brightness, 0-1.0, used to scale all provided HSV triples to attempt to avoid user blindness
+        """
+        return self._brightness
+
+    @property
+    def raw_hsv(self):
+        """
+        Raw HSV triple before applying brightness
+        """
+        return self._hsv
+
+    def set_brightness(self, brightness):
+        """
+        Attempt to set the brightness
+
+        :param brightness:
+            If this is anything other than something that can be parsed as a float, do nothing
+        :return:
+            The calculated HSV triple, which will include this brightness change if anything was changed
+        """
+        try:
+            self._brightness = _check_positive(float(brightness))
+        except ValueError:
+            LOGGER.warning(f'unable to use {brightness} as a brightness setting, must be a floating point value')
+        return self.hsv
+
+    def set_colour(self, l):
+        """
+        Attempt to set the colour
+
+        :param l:
+            Either a 3 item tuple parsable as three floats, or a value in the CSS4_COLOURS dict
+        :return:
+            The calculated HSV triple, which will include any colour change if the argument was parsed
+        """
+        if isinstance(l, tuple):
+            if len(l) != 3:
+                LOGGER.warning('set_colour tuple property must be length 3 (hue, saturation, value)')
+                return
+            h, s, v, = l
+            try:
+                h = float(h)
+                s = float(s)
+                v = float(v)
+            except ValueError:
+                LOGGER.warning(
+                    'tuple argument to set_colour must be parsable as three numbers (hue, saturation, value')
+                return
+            self._hsv = _check_positive(h), _check_positive(s), _check_positive(v)
+        elif l in LED.CSS4_COLOURS:
+            self._hsv = LED.CSS4_COLOURS[l]
+        else:
+            LOGGER.warning(f'unable to use {l} as a colour when setting the LED')
+        return self.hsv
+
+
+def _check_positive(i):
+    f = float(i)
+    if f < 0.0:
+        LOGGER.warning('Value < 0, returning 0')
+        return 0.0
+    if f > 1.0:
+        LOGGER.warning('Value > 1.0, returning 1.0')
+        return 1.0
+    return f

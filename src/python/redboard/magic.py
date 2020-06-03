@@ -1,4 +1,5 @@
 import logging
+
 import yaml
 
 LOGGER = logging.getLogger(name='magic')
@@ -9,7 +10,7 @@ SERVOS = 'servos'
 ADCS = 'adcs'
 
 
-def add_properties(board, motors=None, servos=None, adcs=None):
+def add_properties(board, motors=None, servos=None, adcs=None, default_adc_divisor=7891):
     """
     Augment an existing instance of a motor, servo, adc, or combination driver class. This wraps up any provided
     methods in ones which check their input ranges properly, exposes those as properties (read and write), adds
@@ -73,6 +74,8 @@ def add_properties(board, motors=None, servos=None, adcs=None):
         An array of integer servo numbers to be exposed for this board, defaults to None for no servos
     :param adcs:
         An array of integer ADC channel numbers to be exposed for this board, defaults to None for no ADC channels
+    :param default_adc_divisor:
+        Initial value for all ADC divisor configs, defaults to 7891
     """
 
     # Replace default values with empty lists
@@ -211,7 +214,7 @@ def add_properties(board, motors=None, servos=None, adcs=None):
 
     # Inject adcXX and adcXX_divisor properties
     for adc in adcs:
-        a = ADC(adc=adc, divisor=0, board=board)
+        a = ADC(adc=adc, divisor=default_adc_divisor, board=board)
         board._config[ADCS][adc] = a
         setattr(Board, f'adc{adc}', property(fget=a.get_value))
         setattr(Board, f'adc{adc}_divisor', property(fset=a.set_divisor, fget=a.get_divisor))
@@ -331,7 +334,7 @@ class SetMotorsMixin:
             ValueError if motors are defined but the supplied index isn't in the array, or no motors are defined.
         """
         if MOTORS in self._config:
-            LOGGER.info('set motor speed called')
+            LOGGER.debug(f'set motor m{motor}={speed}')
             if motor not in self._config[MOTORS]:
                 raise ValueError(f'motor m{motor} not in {list(self._config[MOTORS].keys())}')
             speed = check_range(speed)
@@ -371,8 +374,9 @@ class SetServosMixin:
         :raises:
             ValueError if the supplied servo index isn't available, or there are no servos defined for this board
         """
-        LOGGER.info(f'set servo s{servo}={position}')
+        LOGGER.debug(f'set servo s{servo}={position}')
         config = self._check_servo_index(servo)
+        position = check_range(position)
         pulse_min, pulse_max = config.pulse_min, config.pulse_max
         config.value = position
         position = -position
@@ -391,7 +395,7 @@ class SetServosMixin:
         :raises:
             ValueError if the supplied servo index isn't available, or there are no servos defined for this board
         """
-        LOGGER.info(f'disable servo s{servo}')
+        LOGGER.debug(f'disable servo s{servo}')
         config = self._check_servo_index(servo)
         config.value = None
         self._set_servo_pulsewidth(servo, 0, **kwargs)
@@ -416,7 +420,7 @@ class ReadADCsMixin:
             ValueError if the supplied channel doesn't exist, or the board has no ADC functionality
         """
         if ADCS in self._config:
-            LOGGER.info('read adc called')
+            LOGGER.debug(f'read adc{adc}')
             if adc not in self._config[ADCS]:
                 raise ValueError(f'adc adc{adc} is not in {list(self._config[ADCS].keys())}')
             config = self._config[ADCS][adc]
