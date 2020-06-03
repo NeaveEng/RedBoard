@@ -268,19 +268,12 @@ class RedBoard:
         self.pi.set_PWM_dutycycle(RedBoard.LED_G_PIN, RedBoard._check_positive(g) * self._pwm_range)
         self.pi.set_PWM_dutycycle(RedBoard.LED_B_PIN, RedBoard._check_positive(b) * self._pwm_range)
 
-    def _read_adc(self, adc, divisor, digits=2, sleep_time=0.01):
+    def _read_adc(self, adc, sleep_time=0.01):
         """
-        Read from the onboard ADC. Note that ADC 0 is the battery monitor and will need a specific divisor to report
-        accurately, don't use this ADC with the default value for divisor unless you happen to have an exactly 3.3v
-        battery (kind of unlikely in this context, and it wouldn't work to power the RedBoard anyway)
+        Read a raw value from the onboard ADC
 
         :param adc:
             Integer index of the ADC to read, 0-3 inclusive
-        :param divisor:
-            Number to divide the reported value by to get a true voltage reading, defaults to 7891 for the 3.3v
-            reference
-        :param digits:
-            Number of digits to round the result, defaults to 2
         :param sleep_time:
             Time to sleep between setting the register from which to read and actually taking the reading. This is
             needed to allow the converter to settle, the default of 1/100s works for all cases, it may be possible
@@ -299,8 +292,7 @@ class RedBoard:
                 data = bus.read_i2c_block_data(RedBoard.ADC_I2C_ADDRESS, register=0x00, length=2)
         except FileNotFoundError as cause:
             raise RedBoardError('I2C not enabled, use raspi-config to enable and try again.') from cause
-
-        return round(float(data[1] + (data[0] << 8)) / divisor, ndigits=digits)
+        return data[1] + (data[0] << 8)
 
     def _set_servo_pulsewidth(self, servo_pin: int, pulse_width: int):
         self.pi.set_servo_pulsewidth(servo_pin, pulse_width)
