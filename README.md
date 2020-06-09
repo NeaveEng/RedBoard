@@ -1,5 +1,7 @@
 # RedBoard Python Code
 
+**Version 0.1.5, 9th June 2020, @Approx_Eng**
+
 This is a clean re-write of the Python code to drive the Red Robotics RedBoard 
 (get one from https://www.tindie.com/products/redrobotics/redboard/) and its 
 associated I2C connected display and motor expansion boards. Proper docs will 
@@ -104,13 +106,39 @@ r.adc0_divisor=1200
 # to create a colour wheel over ten seconds we can do this:
 from time import sleep
 for h in range(0,100):
-    r.set_led(h/100, 1, 0.1)
+    r.led0 = h/100, 1, 0.1
     sleep(0.1)
 # If you want white, that's just any colour with saturation set to 0:
-r.set_led(0, 0, 0.1)
-# If you don't like your eyes, just set value to 1 and look closely at the LED
-# (please don't do this!)
+r.led0 = 0, 0, 1
+# Change the brightness, the default value is 0.6 which is reasonable for most uses
+r.led0_brightness = 0.4
+# Change the saturation compensation, higher values make paler colours more colourful,
+# the default value is 2, setting to 0 will only allow you to show shades of white
+r.led0_saturation = 3
+# Change the gamma compensation, this changes how brightness is mapped onto a curve, and
+# is set to 2 for the board by default, this should give you a smooth brightness change but you
+# can override it if you really want to for some reason
+r.led0_gamma = 1.9
+# You can also set colour from any of the named CSS4 colours
+r.led0 = 'pink'
 ```
+
+## Showing the configuration and test GUI
+
+The redboard library comes with a text-based GUI which allows you to drive any attached motors
+and servos, show the values of any analogue inputs, and calibrate all of these. Motors can be
+set to reverse or not, servos can have their maximum and minimum pulse widths configured, and
+ADC channels can be set against a known voltage. This configuration is printed to the console
+when you exit the GUI as a YAML file, you can then load this into a Python dict and set the
+config property on the board in your own code from that dict.
+
+```python
+> redboard-gui
+```
+
+Note that this command might not appear if you have an early version of `pip` installed, if
+you've installed the redboard package but don't have this option try updating pip, uninstalling
+and reinstalling the `redboard` package.
 
 ## Using MX2 motor expansion boards without the RedBoard
 
