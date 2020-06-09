@@ -1,22 +1,18 @@
 # -*- coding: future_fstrings -*-
 
-import colorsys
 import logging
 import time
 
 import pigpio
 import smbus2
 from PIL import ImageFont
+from approxeng.hwsupport import add_properties
 from luma.core.interface.serial import i2c
 from luma.core.render import canvas
 from luma.oled.device import ssd1306
 
-from redboard.magic import add_properties
-
 # Logger
 LOGGER = logging.getLogger(name='redboard')
-# logging.basicConfig(level=logging.DEBUG)
-
 
 # Potential I2C addresses for MX2 boards
 MX2_BOARD_CANDIDATE_I2C_ADDRESSES = [0x30, 0x31, 0x32, 0x33]
@@ -226,11 +222,13 @@ class RedBoard:
 
         # Inject property based accessors, along with configuration infrastructure
         add_properties(board=self, motors=range(0, self.num_motors), servos=RedBoard.SERVO_PINS, adcs=[0, 1, 2, 3],
-                       default_adc_divisor=7891)
+                       default_adc_divisor=7891, leds=[0])
         # Set adc0 divisor, this uses a different config as it's attached to the battery
         self.adc0_divisor = 1100
-        # Set up LED properties
-        self._led = LED()
+        # Configure the LED, setting gamma and saturation correction to 2 for better pale colours, and brightness to 0.6
+        self.led0_brightness = 0.6
+        self.led0_gamma = 2
+        self.led0_saturation = 2
 
         # Stop the motors if requested
         if stop_motors:
@@ -247,58 +245,14 @@ class RedBoard:
             self._pi = pigpio.pi()
         return self._pi
 
-    @staticmethod
-    def _check_positive(i):
-        f = float(i)
-        if f < 0.0:
-            LOGGER.warning('Value < 0, returning 0')
-            return 0.0
-        if f > 1.0:
-            LOGGER.warning('Value > 1.0, returning 1.0')
-            return 1.0
-        return f
-
-    @property
-    def led(self):
+    def _set_led_rgb(self, led, r, g, b):
         """
-        Raw HSV, before any brightness adjustment
+        Set the on-board LED to the given r, g, b values - we only have one LED so we ignore the LED number. Values
+        range from 0.0 to 1.0, and have gamma, saturation, and brightness correction already applied.
         """
-        return self._led.raw_hsv
-
-    @led.setter
-    def led(self, l):
-        """
-        Set either by tuple of h, s, v floats, or by colour name
-        """
-        self.set_led(*self._led.set_colour(l))
-
-    @property
-    def led_brightness(self):
-        """
-        LED brightness, used to scale the value part of the HSV triple.
-        """
-        return self._led.brightness
-
-    @led_brightness.setter
-    def led_brightness(self, brightness):
-        """
-        Set LED brightness and update the LED chip, floating point value 0-1.0
-        """
-        self.set_led(*self._led.set_brightness(brightness))
-
-    def set_led(self, h, s, v):
-        """
-        Set the on-board LED to the given hue, saturation, value (0.0-1.0). Best to set this using the properties, as
-        you get brightness scaling included that way. I.e. board.led='red', or board.led=0,0.8,1.0, set brightness with
-        board.led_brightness=0.5 or similar. Colours render best at brightness of around 0.4-0.6.
-        """
-        self._led.set_colour((h, s, v))
-        r, g, b = colorsys.hsv_to_rgb(_check_positive(h),
-                                      _check_positive(s),
-                                      _check_positive(v))
-        self.pi.set_PWM_dutycycle(RedBoard.LED_R_PIN, RedBoard._check_positive(r) * self._pwm_range)
-        self.pi.set_PWM_dutycycle(RedBoard.LED_G_PIN, RedBoard._check_positive(g) * self._pwm_range)
-        self.pi.set_PWM_dutycycle(RedBoard.LED_B_PIN, RedBoard._check_positive(b) * self._pwm_range)
+        self.pi.set_PWM_dutycycle(RedBoard.LED_R_PIN, r * self._pwm_range)
+        self.pi.set_PWM_dutycycle(RedBoard.LED_G_PIN, g * self._pwm_range)
+        self.pi.set_PWM_dutycycle(RedBoard.LED_B_PIN, b * self._pwm_range)
 
     def _read_adc(self, adc, sleep_time=0.01):
         """
@@ -311,7 +265,7 @@ class RedBoard:
             needed to allow the converter to settle, the default of 1/100s works for all cases, it may be possible
             to reduce it if needed for faster response, or consider putting this in a separate thread
         :return:
-            Measured voltage
+            Raw value from ADC channel
         """
         try:
             with smbus2.SMBus(bus=self.i2c_bus_number) as bus:
@@ -365,166 +319,10 @@ class RedBoard:
 
     def _stop(self):
         """
-        SHUT IT DOWN! Equivalent to setting all motor speeds to zero and calling disable_servo on all available servo
-        outputs, then calling stop() on the PiGPIO instance. Any subsequent calls that would need pigpio will restart
-        it as a side effect, so it's safe to call this even if you've not completely finished with the board.
-
-        Also sets the speed on any connected I2C motor expansions to 0
+        Called by the injected stop() method after all motors, servos and LEDs have been deactivated, just cleans up
+        our PIGPIO instance.
         """
-        self.set_led(0, 0, 0)
-        self.pi.stop()
-        self._pi = None
-        LOGGER.info('RedBoard motors and servos stopped')
-
-
-class LED:
-    """
-    Helper class because we don't really want to be spraying colour names all over the rest of the board code
-    """
-
-    # HSV triples for each of the standard colour names, can be used when setting the led property
-    CSS4_COLOURS = {'aliceblue': (0.578, 0.059, 1.0), 'antiquewhite': (0.095, 0.14, 0.98), 'aqua': (0.5, 1.0, 1.0),
-                    'aquamarine': (0.444, 0.502, 1.0), 'azure': (0.5, 0.059, 1.0), 'beige': (0.167, 0.102, 0.961),
-                    'bisque': (0.09, 0.231, 1.0), 'black': (0.0, 0.0, 0.0), 'blanchedalmond': (0.1, 0.196, 1.0),
-                    'blue': (0.667, 1.0, 1.0), 'blueviolet': (0.753, 0.81, 0.886), 'brown': (0.0, 0.745, 0.647),
-                    'burlywood': (0.094, 0.392, 0.871), 'cadetblue': (0.505, 0.406, 0.627),
-                    'chartreuse': (0.25, 1.0, 1.0),
-                    'chocolate': (0.069, 0.857, 0.824), 'coral': (0.045, 0.686, 1.0),
-                    'cornflowerblue': (0.607, 0.578, 0.929), 'cornsilk': (0.133, 0.137, 1.0),
-                    'crimson': (0.967, 0.909, 0.863), 'cyan': (0.5, 1.0, 1.0), 'darkblue': (0.667, 1.0, 0.545),
-                    'darkcyan': (0.5, 1.0, 0.545), 'darkgoldenrod': (0.118, 0.94, 0.722), 'darkgray': (0.0, 0.0, 0.663),
-                    'darkgreen': (0.333, 1.0, 0.392), 'darkgrey': (0.0, 0.0, 0.663), 'darkkhaki': (0.154, 0.434, 0.741),
-                    'darkmagenta': (0.833, 1.0, 0.545), 'darkolivegreen': (0.228, 0.561, 0.42),
-                    'darkorange': (0.092, 1.0, 1.0), 'darkorchid': (0.778, 0.755, 0.8), 'darkred': (0.0, 1.0, 0.545),
-                    'darksalmon': (0.042, 0.476, 0.914), 'darkseagreen': (0.333, 0.239, 0.737),
-                    'darkslateblue': (0.69, 0.561, 0.545), 'darkslategray': (0.5, 0.405, 0.31),
-                    'darkslategrey': (0.5, 0.405, 0.31), 'darkturquoise': (0.502, 1.0, 0.82),
-                    'darkviolet': (0.784, 1.0, 0.827), 'deeppink': (0.91, 0.922, 1.0), 'deepskyblue': (0.542, 1.0, 1.0),
-                    'dimgray': (0.0, 0.0, 0.412), 'dimgrey': (0.0, 0.0, 0.412), 'dodgerblue': (0.582, 0.882, 1.0),
-                    'firebrick': (0.0, 0.809, 0.698), 'floralwhite': (0.111, 0.059, 1.0),
-                    'forestgreen': (0.333, 0.755, 0.545), 'fuchsia': (0.833, 1.0, 1.0), 'gainsboro': (0.0, 0.0, 0.863),
-                    'ghostwhite': (0.667, 0.027, 1.0), 'gold': (0.141, 1.0, 1.0), 'goldenrod': (0.119, 0.853, 0.855),
-                    'gray': (0.0, 0.0, 0.502), 'green': (0.333, 1.0, 0.502), 'greenyellow': (0.232, 0.816, 1.0),
-                    'grey': (0.0, 0.0, 0.502), 'honeydew': (0.333, 0.059, 1.0), 'hotpink': (0.917, 0.588, 1.0),
-                    'indianred': (0.0, 0.551, 0.804), 'indigo': (0.763, 1.0, 0.51), 'ivory': (0.167, 0.059, 1.0),
-                    'khaki': (0.15, 0.417, 0.941), 'lavender': (0.667, 0.08, 0.98),
-                    'lavenderblush': (0.944, 0.059, 1.0),
-                    'lawngreen': (0.251, 1.0, 0.988), 'lemonchiffon': (0.15, 0.196, 1.0),
-                    'lightblue': (0.541, 0.248, 0.902), 'lightcoral': (0.0, 0.467, 0.941),
-                    'lightcyan': (0.5, 0.122, 1.0),
-                    'lightgoldenrodyellow': (0.167, 0.16, 0.98), 'lightgray': (0.0, 0.0, 0.827),
-                    'lightgreen': (0.333, 0.395, 0.933), 'lightgrey': (0.0, 0.0, 0.827),
-                    'lightpink': (0.975, 0.286, 1.0),
-                    'lightsalmon': (0.048, 0.522, 1.0), 'lightseagreen': (0.491, 0.82, 0.698),
-                    'lightskyblue': (0.564, 0.46, 0.98), 'lightslategray': (0.583, 0.222, 0.6),
-                    'lightslategrey': (0.583, 0.222, 0.6), 'lightsteelblue': (0.594, 0.207, 0.871),
-                    'lightyellow': (0.167, 0.122, 1.0), 'lime': (0.333, 1.0, 1.0), 'limegreen': (0.333, 0.756, 0.804),
-                    'linen': (0.083, 0.08, 0.98), 'magenta': (0.833, 1.0, 1.0), 'maroon': (0.0, 1.0, 0.502),
-                    'mediumaquamarine': (0.443, 0.502, 0.804), 'mediumblue': (0.667, 1.0, 0.804),
-                    'mediumorchid': (0.8, 0.597, 0.827), 'mediumpurple': (0.721, 0.489, 0.859),
-                    'mediumseagreen': (0.408, 0.665, 0.702), 'mediumslateblue': (0.69, 0.563, 0.933),
-                    'mediumspringgreen': (0.436, 1.0, 0.98), 'mediumturquoise': (0.494, 0.656, 0.82),
-                    'mediumvioletred': (0.895, 0.894, 0.78), 'midnightblue': (0.667, 0.777, 0.439),
-                    'mintcream': (0.417, 0.039, 1.0), 'mistyrose': (0.017, 0.118, 1.0), 'moccasin': (0.106, 0.29, 1.0),
-                    'navajowhite': (0.1, 0.322, 1.0), 'navy': (0.667, 1.0, 0.502), 'oldlace': (0.109, 0.091, 0.992),
-                    'olive': (0.167, 1.0, 0.502), 'olivedrab': (0.221, 0.754, 0.557), 'orange': (0.108, 1.0, 1.0),
-                    'orangered': (0.045, 1.0, 1.0), 'orchid': (0.84, 0.486, 0.855),
-                    'palegoldenrod': (0.152, 0.286, 0.933),
-                    'palegreen': (0.333, 0.394, 0.984), 'paleturquoise': (0.5, 0.265, 0.933),
-                    'palevioletred': (0.945, 0.489, 0.859), 'papayawhip': (0.103, 0.165, 1.0),
-                    'peachpuff': (0.079, 0.275, 1.0), 'peru': (0.082, 0.693, 0.804), 'pink': (0.971, 0.247, 1.0),
-                    'plum': (0.833, 0.276, 0.867), 'powderblue': (0.519, 0.235, 0.902), 'purple': (0.833, 1.0, 0.502),
-                    'rebeccapurple': (0.75, 0.667, 0.6), 'red': (0.0, 1.0, 1.0), 'rosybrown': (0.0, 0.239, 0.737),
-                    'royalblue': (0.625, 0.711, 0.882), 'saddlebrown': (0.069, 0.863, 0.545),
-                    'salmon': (0.017, 0.544, 0.98), 'sandybrown': (0.077, 0.607, 0.957),
-                    'seagreen': (0.407, 0.669, 0.545),
-                    'seashell': (0.069, 0.067, 1.0), 'sienna': (0.054, 0.719, 0.627), 'silver': (0.0, 0.0, 0.753),
-                    'skyblue': (0.548, 0.426, 0.922), 'slateblue': (0.69, 0.561, 0.804),
-                    'slategray': (0.583, 0.222, 0.565),
-                    'slategrey': (0.583, 0.222, 0.565), 'snow': (0.0, 0.02, 1.0), 'springgreen': (0.416, 1.0, 1.0),
-                    'steelblue': (0.576, 0.611, 0.706), 'tan': (0.095, 0.333, 0.824), 'teal': (0.5, 1.0, 0.502),
-                    'thistle': (0.833, 0.116, 0.847), 'tomato': (0.025, 0.722, 1.0), 'turquoise': (0.483, 0.714, 0.878),
-                    'violet': (0.833, 0.454, 0.933), 'wheat': (0.109, 0.269, 0.961), 'white': (0.0, 0.0, 1.0),
-                    'whitesmoke': (0.0, 0.0, 0.961), 'yellow': (0.167, 1.0, 1.0), 'yellowgreen': (0.222, 0.756, 0.804)}
-
-    def __init__(self):
-        self._brightness = 1.0
-        self._hsv = (0, 0, 0)
-
-    @property
-    def hsv(self):
-        """
-        Calculated HSV triple taking brightness into account
-        """
-        h, s, v = self._hsv
-        v = v * self._brightness
-        return h, s, v
-
-    @property
-    def brightness(self):
-        """
-        Brightness, 0-1.0, used to scale all provided HSV triples to attempt to avoid user blindness
-        """
-        return self._brightness
-
-    @property
-    def raw_hsv(self):
-        """
-        Raw HSV triple before applying brightness
-        """
-        return self._hsv
-
-    def set_brightness(self, brightness):
-        """
-        Attempt to set the brightness
-
-        :param brightness:
-            If this is anything other than something that can be parsed as a float, do nothing
-        :return:
-            The calculated HSV triple, which will include this brightness change if anything was changed
-        """
-        try:
-            self._brightness = _check_positive(float(brightness))
-        except ValueError:
-            LOGGER.warning(f'unable to use {brightness} as a brightness setting, must be a floating point value')
-        return self.hsv
-
-    def set_colour(self, l):
-        """
-        Attempt to set the colour
-
-        :param l:
-            Either a 3 item tuple parsable as three floats, or a value in the CSS4_COLOURS dict
-        :return:
-            The calculated HSV triple, which will include any colour change if the argument was parsed
-        """
-        if isinstance(l, tuple):
-            if len(l) != 3:
-                LOGGER.warning('set_colour tuple property must be length 3 (hue, saturation, value)')
-                return
-            h, s, v, = l
-            try:
-                h = float(h)
-                s = float(s)
-                v = float(v)
-            except ValueError:
-                LOGGER.warning(
-                    'tuple argument to set_colour must be parsable as three numbers (hue, saturation, value')
-                return
-            self._hsv = _check_positive(h), _check_positive(s), _check_positive(v)
-        elif l in LED.CSS4_COLOURS:
-            self._hsv = LED.CSS4_COLOURS[l]
-        else:
-            LOGGER.warning(f'unable to use {l} as a colour when setting the LED')
-        return self.hsv
-
-
-def _check_positive(i):
-    f = float(i)
-    if f < 0.0:
-        LOGGER.warning('Value < 0, returning 0')
-        return 0.0
-    if f > 1.0:
-        LOGGER.warning('Value > 1.0, returning 1.0')
-        return 1.0
-    return f
+        if self._pi is not None:
+            self._pi.stop()
+            self._pi = None
+        LOGGER.info('RedBoard motors, servos, and LED stopped')
