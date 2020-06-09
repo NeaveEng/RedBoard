@@ -101,16 +101,17 @@ r.adc0_divisor=1200
 ## Set the onboard LED
 
 ```python
-# Set by hue, saturation, value. Values of 0.1 are good for non-blinding!
-# Hue, Saturation and Value are all from 0.0 to 1.0, Hue of 0 is red, so
-# to create a colour wheel over ten seconds we can do this:
+# Set by hue, saturation, value. Hue is a circular quantity, so you can use any value (it'll
+# be converted into the 0.0-1.0 range by taking only the positive fractional part). Saturation
+# and value should be in 0.0-1.0 range.
 from time import sleep
 for h in range(0,100):
     r.led0 = h/100, 1, 0.1
     sleep(0.1)
 # If you want white, that's just any colour with saturation set to 0:
 r.led0 = 0, 0, 1
-# Change the brightness, the default value is 0.6 which is reasonable for most uses
+# Change the brightness, the default value is 0.6 which is reasonable for most uses, a value of
+# 1.0 can be quite dazzling.
 r.led0_brightness = 0.4
 # Change the saturation compensation, higher values make paler colours more colourful,
 # the default value is 2, setting to 0 will only allow you to show shades of white
@@ -121,7 +122,14 @@ r.led0_saturation = 3
 r.led0_gamma = 1.9
 # You can also set colour from any of the named CSS4 colours
 r.led0 = 'pink'
+# If for some reason you want to get or set as RGB rather than HSV you can, i.e. for red:
+# Note that gamma, saturation, and brightness are still applied if set, so using RGB values
+# is exactly equivalent to using the corresponding HSV ones, i.e. in this case RGB of 1,0,0
+# is exactly the same as HSV of 0,1,1
+r.led0_rgb = 1.0, 0.0, 0.0
 ```
+
+You can find the available named colours at https://www.w3.org/TR/css-color-4/#named-colors
 
 ## Showing the configuration and test GUI
 
