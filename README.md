@@ -1,6 +1,6 @@
 # RedBoard Python Code
 
-**Version 0.1.6, 21st September 2020, @Approx_Eng**
+**Version 0.1.7, 21st September 2020, @Approx_Eng**
 
 This is a clean re-write of the Python code to drive the Red Robotics RedBoard 
 (get one from https://www.tindie.com/products/redrobotics/redboard/) and its 
@@ -192,6 +192,13 @@ This works exactly the same way as the built-in servo properties on the
 regular RedBoard driver class, it just gives you another 16 of them to
 play with (0 to 15). Remember to power your expansion board properly,
 16 servos can pull quite a lot of current!
+
+You can also launch a GUI similar to that for the main RedBoard for the
+servo expander with `pca9685-gui`, this will allow you to test all the
+servos on the expander and configure minimum and maximum pulse ranges
+for each one. Because the driver uses hwsupport, it handles the same
+configuration mechanism as the RedBoard for save and load of per-servo
+settings.
 
 Use with boards like this one from AdaFruit (or similar, much cheaper, ones from ebay!) 
 https://learn.adafruit.com/16-channel-pwm-servo-driver 

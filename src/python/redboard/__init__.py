@@ -336,7 +336,12 @@ class PCA9685:
     uses approxeng.hwsupport to manage configuration, property based access, range checking etc.
     """
 
-    def __init__(self, i2c_bus_number=1, address=0x40):
+    # When using its internal oscilator, this chip has a base clock of 25MHz, this is divided by
+    # a pre-scale value to derive the output PWM frequency. If an external oscillator is configured
+    # then that needs to be specified in the constructor, but this is the default value otherwise.
+    INTERNAL_CLOCK = 25000000.0
+
+    def __init__(self, i2c_bus_number=1, address=0x40, clock=INTERNAL_CLOCK):
         """
         Create a new driver for a PCA9685 chip on an accessible I2C bus
 
@@ -345,7 +350,11 @@ class PCA9685:
         :param address:
             I2C address, set using solder jumpers on most expansion boards, defaults to 0x40 but use i2cdetect
             to find the address on your particular system if needed
+        :param clock:
+            Oscillator for the chip, defaults to 25MHz for use with the internal clock source, you almost
+            certainly never need to set this explicitly
         """
+        self._clock = clock
         self._frequency = 0
         self.i2c_bus_number = i2c_bus_number
         self.address = address
@@ -367,13 +376,19 @@ class PCA9685:
         old_mode = self._mode
         if old_mode is not None:
             self._mode = (old_mode & 0x7F) | 0x10
+            # The prescale value must be at least 3, at most 255
+            prescale_value = min(255, max(3, int(floor(self._clock / (4096.0 * frequency_hz) - 0.5))))
             with SMBus(bus=self.i2c_bus_number) as bus:
                 bus.write_byte_data(i2c_addr=self.address, register=0xFE,
-                                    value=floor(25000000.0 / (4096.0 * frequency_hz) - 0.5))
+                                    value=prescale_value)
             self._mode = old_mode
             sleep(0.005)
             self._mode = old_mode | 0x80
-            self._frequency = frequency_hz
+            # Work out what the actual frequency will be now by inverting the prescale logic
+            # Most of the time this will be pretty close to the requested value, but we can
+            # make the mapping from duty cycle to pulse width more accurate if we store the
+            # actual rather than requested value here.
+            self._frequency = self._clock / (4096.0 * (prescale_value + 1))
 
     @property
     def _mode(self):
