@@ -1,6 +1,6 @@
 # RedBoard Python Code
 
-**Version 0.1.5, 9th June 2020, @Approx_Eng**
+**Version 0.1.6, 21st September 2020, @Approx_Eng**
 
 This is a clean re-write of the Python code to drive the Red Robotics RedBoard 
 (get one from https://www.tindie.com/products/redrobotics/redboard/) and its 
@@ -28,6 +28,8 @@ Simplest option:
 ```bash
 > pip3 install redboard
 ```
+
+Note - this code requires Python 3, at least version 3.6.
 
 ### Building from source
 
@@ -174,6 +176,25 @@ Now create a display object and use it:
 d = redboard.Display()
 d.text(line1='Hello', line2='Python', line3='World')
 ```
+
+## Using an attached servo expander
+
+Because the really useful header on the RedBoard+ has exactly the right pins to
+add one of those 16 channel servo expanders based on the PCA9685, I've added
+a driver for that board to this library:
+
+```python
+expander = redboard.PCA9685()
+expander.servo3 = 0.4
+```
+
+This works exactly the same way as the built-in servo properties on the
+regular RedBoard driver class, it just gives you another 16 of them to
+play with (0 to 15). Remember to power your expansion board properly,
+16 servos can pull quite a lot of current!
+
+Use with boards like this one from AdaFruit (or similar, much cheaper, ones from ebay!) 
+https://learn.adafruit.com/16-channel-pwm-servo-driver 
 
 ## Save and restore configuration
 
