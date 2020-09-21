@@ -4,8 +4,10 @@ import logging
 import time
 
 import pigpio
-import smbus2
+from smbus2 import SMBus
 from PIL import ImageFont
+from math import floor
+from time import sleep
 from approxeng.hwsupport import add_properties
 from luma.core.interface.serial import i2c
 from luma.core.render import canvas
@@ -98,7 +100,7 @@ class RedBoardError(Exception):
 
 def i2c_device_exists(address, i2c_bus_number=1):
     try:
-        with smbus2.SMBus(bus=i2c_bus_number) as bus:
+        with SMBus(bus=i2c_bus_number) as bus:
             try:
                 bus.read_byte_data(i2c_addr=address, register=0)
                 return True
@@ -145,7 +147,7 @@ class MX2:
         :param speed:
             A value between -1.0 and 1.0, values outside this range will be clamped to it
         """
-        with smbus2.SMBus(self.i2c_bus_number) as bus:
+        with SMBus(self.i2c_bus_number) as bus:
             bus.write_i2c_block_data(i2c_addr=self.address,
                                      register=0x30 if motor == 0 else 0x40,
                                      data=[1 if speed >= 0 else 0, int(abs(speed) * 255)])
@@ -268,7 +270,7 @@ class RedBoard:
             Raw value from ADC channel
         """
         try:
-            with smbus2.SMBus(bus=self.i2c_bus_number) as bus:
+            with SMBus(bus=self.i2c_bus_number) as bus:
                 bus.write_i2c_block_data(RedBoard.ADC_I2C_ADDRESS, register=0x01,
                                          data=[RedBoard.ADC_REGISTER_ADDRESSES[adc], 0x83])
                 # ADC channels seem to need some time to settle, the default of 0.01 works for cases where we
@@ -310,7 +312,7 @@ class RedBoard:
             i2c_address = self.i2c_motor_expansions[(motor - len(RedBoard.MOTORS)) // 2]
             i2c_motor_number = (motor - len(RedBoard.MOTORS)) % 2
             try:
-                with smbus2.SMBus(bus=self.i2c_bus_number) as bus:
+                with SMBus(bus=self.i2c_bus_number) as bus:
                     bus.write_i2c_block_data(i2c_addr=i2c_address,
                                              register=0x30 if i2c_motor_number == 0 else 0x40,
                                              data=[1 if speed >= 0 else 0, int(abs(speed) * 255)])
@@ -326,3 +328,87 @@ class RedBoard:
             self._pi.stop()
             self._pi = None
         LOGGER.info('RedBoard motors, servos, and LED stopped')
+
+
+class PCA9685:
+    """
+    Drives boards based on the PCA9685 16 channel PWM chip. Code based on examples from Adafruit and elsewhere,
+    uses approxeng.hwsupport to manage configuration, property based access, range checking etc.
+    """
+
+    def __init__(self, i2c_bus_number=1, address=0x40):
+        """
+        Create a new driver for a PCA9685 chip on an accessible I2C bus
+
+        :param i2c_bus_number:
+            Bus number, defaults to 1 for the built-in hardware I2C on modern Raspberry Pi boards
+        :param address:
+            I2C address, set using solder jumpers on most expansion boards, defaults to 0x40 but use i2cdetect
+            to find the address on your particular system if needed
+        """
+        self._frequency = 0
+        self.i2c_bus_number = i2c_bus_number
+        self.address = address
+        self._mode = 0
+        self._frequency = 50
+        add_properties(board=self, servos=range(16))
+
+    @property
+    def frequency(self):
+        """
+        The PWM frequency used for channels on this board. Defaults to 50Hz which is a sensible value for most servos,
+        but you might want to change this if you're using the board to drive e.g. LEDs and need a faster update speed
+        to prevent flickering.
+        """
+        return self._frequency
+
+    @frequency.setter
+    def frequency(self, frequency_hz):
+        old_mode = self._mode
+        if old_mode is not None:
+            self._mode = (old_mode & 0x7F) | 0x10
+            with SMBus(bus=self.i2c_bus_number) as bus:
+                bus.write_byte_data(i2c_addr=self.address, register=0xFE,
+                                    value=floor(25000000.0 / (4096.0 * frequency_hz) - 0.5))
+            self._mode = old_mode
+            sleep(0.005)
+            self._mode = old_mode | 0x80
+            self._frequency = frequency_hz
+
+    @property
+    def _mode(self):
+        """
+        Command mode for the PCA9685, internal use.
+        """
+        with SMBus(bus=self.i2c_bus_number) as bus:
+            return bus.read_byte_data(i2c_addr=self.address, register=0x00)
+
+    @_mode.setter
+    def _mode(self, new_mode):
+        with SMBus(bus=self.i2c_bus_number) as bus:
+            bus.write_byte_data(i2c_addr=self.address, register=0x00, value=new_mode)
+
+    def _set_servo_pulsewidth(self, channel: int, pulse_width: int):
+        """
+        Pulse width specified in microseconds, channel should be 0..15. This is used by the hwsupport module
+        to create the various servoXXX properties and manage configuration. You probably don't want to use
+        it directly.
+        """
+        self.set_duty_cycle(channel, min(4095, int(pulse_width * self.frequency * (4096 / 1000000))))
+
+    def set_duty_cycle(self, channel: int, duty: int):
+        """
+        Directly set the duty cycle of a channel, use this if you're directly controlling the duty cycle as opposed
+        to the pulse width, for example to drive LEDs or other PWM peripherals where the duty cycle is more important
+        than the pulse width.
+
+        Note that there's no value checking on this method, you must set a channel between 0 and 15 inclusive and a
+        duty cycle from 0 to 4095 inclusive, values outside these ranges have undefined (and probably unfortunate)
+        results.
+
+        :param channel: channel 0..15
+        :param duty: duty cycle 0..4095
+        """
+        with SMBus(bus=self.i2c_bus_number) as bus:
+            bus.write_byte_data(i2c_addr=self.address, register=0x08 + channel * 4, value=duty & 0xFF)
+            bus.write_byte_data(i2c_addr=self.address, register=0x09 + channel * 4, value=duty >> 8)
