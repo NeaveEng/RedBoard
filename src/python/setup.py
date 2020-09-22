@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='redboard',
-    version='0.1.7',
+    version='0.1.8',
     author='Tom Oinn',
     author_email='tomoinn@gmail.com',
     url='https://github.com/ApproxEng/RedBoard',
@@ -11,6 +11,6 @@ setup(
     packages=find_packages(),
     install_requires=['smbus2', 'luma.oled', 'pigpio', 'approxeng.hwsupport'],
     entry_points={
-        'console_scripts': ['redboard-gui=redboard.console:main', 'pca9685-gui=redboard.console:pca9684']
+        'console_scripts': ['redboard-gui=redboard.console:main', 'pca9685-gui=redboard.console:pca9685']
     }
 )

@@ -1,6 +1,6 @@
 # RedBoard Python Code
 
-**Version 0.1.7, 21st September 2020, @Approx_Eng**
+**Version 0.1.8, 22nd September 2020, @Approx_Eng**
 
 This is a clean re-write of the Python code to drive the Red Robotics RedBoard 
 (get one from https://www.tindie.com/products/redrobotics/redboard/) and its 
