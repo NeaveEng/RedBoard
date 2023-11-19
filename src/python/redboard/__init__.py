@@ -1,9 +1,19 @@
-# -*- coding: future_fstrings -*-
+# Forked version of ApproxEng's RedBoard library to make it work on a Raspberry Pi 5.
+# For all previous versions of the Pi, please use the original library.
+
+# Check to confirm this is running on a Raspberry Pi 5
+model = open("/proc/device-tree/model", "r").read()
+if(model.startswith("Raspberry Pi 5") != True):
+    raise Exception("This version of the RedBoard library is only for Raspberry Pi 5 devices. Please use the original approxeng/RedBoard library for your device.")
 
 import logging
 import time
 
-import pigpio
+from gpiozero import Device, DigitalOutputDevice, PWMOutputDevice, RGBLED
+from gpiozero.pins.lgpio import LGPIOFactory
+
+Device.pin_factory = LGPIOFactory("/dev/gpiochip4")
+
 from smbus2 import SMBus
 from PIL import ImageFont
 from math import floor
@@ -155,14 +165,15 @@ class MX2:
 
 class RedBoard:
     # BCM Pin assignments
-    MOTORS = [{'dir': 23, 'pwm': 18},
-              {'dir': 24, 'pwm': 25}]
+    MOTOR_PINS = [{'dir': 23, 'pwm': 18},
+                  {'dir': 24, 'pwm': 25}]
     SERVO_PINS = [7, 8, 9, 10, 11, 5, 6, 13, 27, 20, 21, 22]
-    LED_R_PIN = 26
-    LED_G_PIN = 16
-    LED_B_PIN = 19
+    RED_LED_PIN = 26
+    GREEN_LED_PIN = 16
+    BLUE_LED_PIN = 19
+    
     # Range for PWM outputs (motors and LEDs) - all values are specified within the -1.0 to 1.0 range,
-    # this is then used when actually sending commands to PiGPIO. In theory increasing it provides
+    # this is then used when actually sending commands to GPIO Zero. In theory increasing it provides
     # smoother control, but I doubt there's any noticeable difference in reality.
     PWM_RANGE = 1000
     PWM_FREQUENCY = 1000
@@ -173,10 +184,15 @@ class RedBoard:
     # Registers to read ADC data
     ADC_REGISTER_ADDRESSES = [0xC3, 0xD3, 0xE3, 0xF3]
 
+    M0 = {"direction": None, "pwm": None}
+    M1 = {"direction": None, "pwm": None}
+    
+    RGB_LED = None
+        
     def __init__(self, i2c_bus_number=1, motor_expansion_addresses=None,
                  stop_motors=True, pwm_frequency=PWM_FREQUENCY, pwm_range=PWM_RANGE):
         """
-        Initialise the RedBoard, setting up SMBus and PiGPIO configuration. Probably should only do this once!
+        Initialise the RedBoard, setting up SMBus and GPIO Zero configuration. Probably should only do this once!
 
         :param i2c_bus_number:
             Defaults to 1 for modern Pi boards, very old ones may need this set to 0
@@ -190,22 +206,26 @@ class RedBoard:
             RedBoardException if unable to initialise
         """
 
-        self._pi = None
         self._pwm_range = pwm_range
+        self._pwm_frequency = pwm_frequency
 
         # Configure PWM for the LED outputs
-        for led_pin in [RedBoard.LED_R_PIN, RedBoard.LED_G_PIN, RedBoard.LED_B_PIN]:
-            self.pi.set_PWM_frequency(led_pin, pwm_frequency)
-            self.pi.set_PWM_range(led_pin, self._pwm_range)
-
+        self.RGB_LED = RGBLED(red = self.RED_LED_PIN, 
+                              green = self.GREEN_LED_PIN, 
+                              blue = self.BLUE_LED_PIN, 
+                              pwm=True,
+                              pin_factory=Device.pin_factory)            
+            
         # Configure motor pulse and direction pins as outputs, set PWM frequency
-        for motor in RedBoard.MOTORS:
-            pwm_pin = motor['pwm']
-            dir_pin = motor['dir']
-            self.pi.set_mode(dir_pin, pigpio.OUTPUT)
-            self.pi.set_mode(pwm_pin, pigpio.OUTPUT)
-            self.pi.set_PWM_frequency(pwm_pin, pwm_frequency)
-            self.pi.set_PWM_range(pwm_pin, self._pwm_range)
+        pwm_pin = self.MOTOR_PINS[0]['pwm']
+        dir_pin = self.MOTOR_PINS[0]['dir']
+        self.M0["direction"] = DigitalOutputDevice(dir_pin, active_high=True, initial_value=False) 
+        self.M0["pwm"] = PWMOutputDevice(pwm_pin, active_high=True, initial_value=0, frequency=self.PWM_FREQUENCY)
+
+        pwm_pin = self.MOTOR_PINS[1]['pwm']
+        dir_pin = self.MOTOR_PINS[1]['dir']
+        self.M1["direction"] = DigitalOutputDevice(dir_pin, active_high=True, initial_value=False) 
+        self.M1["pwm"] = PWMOutputDevice(pwm_pin, active_high=True, initial_value=0, frequency=self.PWM_FREQUENCY)
 
         # Set bus number to use for ADC and MX2 boards
         self.i2c_bus_number = i2c_bus_number
@@ -220,7 +240,7 @@ class RedBoard:
 
         self.i2c_motor_expansions = autodetect_mx2_board_addresses() if motor_expansion_addresses is None \
             else motor_expansion_addresses
-        self.num_motors = len(RedBoard.MOTORS) + (len(self.i2c_motor_expansions) * 2)
+        self.num_motors = len(RedBoard.MOTOR_PINS) + (len(self.i2c_motor_expansions) * 2)
 
         # Inject property based accessors, along with configuration infrastructure
         add_properties(board=self, motors=range(0, self.num_motors), servos=RedBoard.SERVO_PINS, adcs=[0, 1, 2, 3],
@@ -237,24 +257,18 @@ class RedBoard:
             self.stop()
         LOGGER.info('redboard initialised')
 
-    @property
-    def pi(self):
-        """
-        The pigpio instance, constructed the first time this property is requested.
-        """
-        if self._pi is None:
-            LOGGER.debug('creating new instance of pigpio.pi()')
-            self._pi = pigpio.pi()
-        return self._pi
-
     def _set_led_rgb(self, led, r, g, b):
         """
         Set the on-board LED to the given r, g, b values - we only have one LED so we ignore the LED number. Values
         range from 0.0 to 1.0, and have gamma, saturation, and brightness correction already applied.
         """
-        self.pi.set_PWM_dutycycle(RedBoard.LED_R_PIN, r * self._pwm_range)
-        self.pi.set_PWM_dutycycle(RedBoard.LED_G_PIN, g * self._pwm_range)
-        self.pi.set_PWM_dutycycle(RedBoard.LED_B_PIN, b * self._pwm_range)
+        
+        print("The RGB LED has not yet been implemented with GPIOZero")
+        # print(r, g, b)
+        # self.RGB_LED.on()
+        # self.RGB_LED.red = r
+        # self.RGB_LED.green = g
+        # self.RGB_LED.blue = b
 
     def _read_adc(self, adc, sleep_time=0.01):
         """
@@ -291,7 +305,8 @@ class RedBoard:
         :param pulse_width:
             Pulse width in microseconds
         """
-        self.pi.set_servo_pulsewidth(servo_pin, pulse_width)
+        print("Servos have not yet been implemented with GPIOZero")
+        # self.pi.set_servo_pulsewidth(servo_pin, pulse_width)
 
     def _set_motor_speed(self, motor, speed: float):
         """
@@ -303,14 +318,37 @@ class RedBoard:
         :param speed:
             Speed between -1.0 and 1.0.
         """
-        if motor < len(RedBoard.MOTORS):
+        if motor == 0:
             # Using the built-in motor drivers on the board
-            self.pi.write(RedBoard.MOTORS[motor]['dir'], 1 if speed > 0 else 0)
-            self.pi.set_PWM_dutycycle(RedBoard.MOTORS[motor]['pwm'], abs(speed) * RedBoard.PWM_RANGE)
+            if(speed == 0):
+                self.M0["pwm"].off()
+            else:
+                if(speed > 0):
+                    self.M0["direction"].on()
+                else:
+                    self.M0["direction"].off()
+
+                self.M0["pwm"].on()
+                self.M0["pwm"].value = abs(speed)
+
+        
+        elif motor == 1:
+            # Using the built-in motor drivers on the board
+            if(speed == 0):
+                self.M1["pwm"].off()
+            else:
+                if(speed > 0):
+                    self.M1["direction"].on()
+                else:
+                    self.M1["direction"].off()
+
+                self.M1["pwm"].on()
+                self.M1["pwm"].value = abs(speed)
+                
         else:
             # Using an I2C expansion board
-            i2c_address = self.i2c_motor_expansions[(motor - len(RedBoard.MOTORS)) // 2]
-            i2c_motor_number = (motor - len(RedBoard.MOTORS)) % 2
+            i2c_address = self.i2c_motor_expansions[(motor - len(RedBoard.MOTOR_PINS)) // 2]
+            i2c_motor_number = (motor - len(RedBoard.MOTOR_PINS)) % 2
             try:
                 with SMBus(bus=self.i2c_bus_number) as bus:
                     bus.write_i2c_block_data(i2c_addr=i2c_address,
@@ -324,9 +362,14 @@ class RedBoard:
         Called by the injected stop() method after all motors, servos and LEDs have been deactivated, just cleans up
         our PIGPIO instance.
         """
-        if self._pi is not None:
-            self._pi.stop()
-            self._pi = None
+        if(self.RGB_LED != None):
+            self.RGB_LED.close()
+            
+        self._set_motor_speed(0, 0)
+        self._set_motor_speed(1, 0)
+        self._set_motor_speed(2, 0)
+        self._set_motor_speed(3, 0)
+        
         LOGGER.info('RedBoard motors, servos, and LED stopped')
 
 

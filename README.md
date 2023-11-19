@@ -1,5 +1,9 @@
 # RedBoard Python Code
 
+**Version 0.1.8a, 19nd November 2023, @kneave**
+
+This is a forked version of @Approx_Eng's package to work around the lack of support for pigpiod on the Raspberry Pi 5. This has to be installed from source, details below. I have not yet got the servos and RGB working, I just needed ADC and motor control in a hurry.
+
 **Version 0.1.8, 22nd September 2020, @Approx_Eng**
 
 This is a clean re-write of the Python code to drive the Red Robotics RedBoard 
@@ -18,30 +22,43 @@ From a clean headless raspbian installation you'll need the following additional
 use this command to get them all in one go:
 
 ```bash
-> sudo apt install libtiff5 libopenjp2-7-dev fonts-dejavu libpython3-dev libjpeg-dev pigpiod
+> sudo apt install libtiff5 libopenjp2-7-dev fonts-dejavu libpython3-dev libjpeg-dev
 ```
-
-### Get with pip
-
-Simplest option:
-
-```bash
-> pip3 install redboard
-```
-
-Note - this code requires Python 3, at least version 3.6.
 
 ### Building from source
 
-If you want to fiddle with the library you can clone it from here and use it directly:
+If you want to fiddle with the library you can clone it from here and use it directly.
+
+First, create your virtual environment, this should also work from in Conda if you're comfortable with that.
 
 ```bash
-> git clone https://github.com/ApproxEng/RedBoard.git
-> virtualenv --python=python3.7 venv
+> cd ~
+> virtualenv --python=python3.11 venv
 > source venv/bin/activate
-> cd RedBoard/src/python
+```
+
+Install `gpiozero`:
+
+```bash
+> python -m pip install gpiozero 
+```
+
+Manually install `lgpio`, get the latest version from (here)[https://github.com/Gadgetoid/PY_LGPIO] however the latest version as of this commit is included below for reference. NOTE: this *only* works if you install using the `setup.py` option below, don't use `pip` as it doesn't work for reasons I can't figure out.
+
+```bash
+> cd ~
+> wget https://github.com/Gadgetoid/PY_LGPIO/releases/download/0.2.2.0/lgpio-0.2.2.0.tar.gz
+> tar -xvzf lgpio-0.2.2.0.tar.gz
+> cd lgpio-0.2.2.0
 > python setup.py develop
 ```
+
+```bash
+> cd ~/RedBoard/src/python
+> python setup.py develop
+```
+
+You should be good to use this as per Tom's library, with the current exception of the RGB LED and servos. I'm working on those once I have my robot working but happy to accept pull requests. 
 
 ## Initialisation
 
