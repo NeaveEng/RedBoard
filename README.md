@@ -1,6 +1,6 @@
 # RedBoard Python Code
 
-**Version 0.1.8a, 19nd November 2023, @kneave**
+**Version 0.1.8a, 19th November 2023, @kneave**
 
 This is a forked version of @Approx_Eng's package to work around the lack of support for pigpiod on the Raspberry Pi 5. This has to be installed from source, details below. I have not yet got the servos and RGB working, I just needed ADC and motor control in a hurry.
 
